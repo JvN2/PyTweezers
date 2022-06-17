@@ -1,5 +1,7 @@
 # see https://pylablib.readthedocs.io/en/latest/devices/cameras_basics.html#cameras-basics
 
+import sys
+
 import cv2
 import matplotlib.pyplot as plt
 import numba as nb
@@ -8,6 +10,11 @@ import pandas as pd
 from pylablib.devices import IMAQ
 from scipy.optimize import curve_fit
 from tqdm import tqdm
+
+if not sys.warnoptions:
+    import warnings
+
+    warnings.simplefilter("ignore")
 
 
 def get_roi(im, width, center=None, size=None):
@@ -71,44 +78,25 @@ def create_ref_image(period=10, width=100, size=100):
     return im * np.cos(2 * np.pi * r / period)
 
 
-@nb.njit(parallel=True, fastmath=True, cache=True)
-def bin2d(a, K):
-    assert a.shape[0] % K == 0
-    assert a.shape[1] % K == 0
-    m_bins = a.shape[0] // K
-    n_bins = a.shape[1] // K
-    res = np.zeros((m_bins, n_bins), dtype=a.dtype)
-    for i in nb.prange(res.shape[0]):
-        for ii in range(i * K, (i + 1) * K):
-            for j in range(res.shape[1]):
-                TMP = res[i, j]
-                for jj in range(j * K, (j + 1) * K):
-                    TMP += a[ii, jj]
-                res[i, j] = TMP
-    return res
-
 # @nb.njit(parallel=True, fastmath=True, cache=True)
 def fit_peak(Z, show=False, center=[0, 0]):
     # Our function to fit is a two-dimensional Gaussian
     def gaussian(x, y, x0, y0, sigma, A):
         return A * np.exp(-((x - x0) / sigma) ** 2 - ((y - y0) / sigma) ** 2)
 
-    # This is the callable that is passed to curve_fit. M is a (2,N) array
-    # where N is the total number of data points in Z, which will be ravelled
-    # to one dimension.
     def _gaussian(M, *args):
         x, y = M
         arr = gaussian(x, y, *args)
         return arr
 
-    Z = np.asarray(Z)
+    Z /= np.max(Z)
     N = len(Z)
     X, Y = np.meshgrid(np.linspace(0, N - 1, N) - N / 2 + center[0],
                        np.linspace(0, N - 1, N) - N / 2 + center[1])
     pars = (center[0], center[1], 2.0, np.max(Z))
-
+    bounds = ((center[0] - N / 2, center[1] - N / 2, 1, 0.1), (center[0] + N / 2, center[1] + N / 2, 10, 2))
     xdata = np.vstack((X.ravel(), Y.ravel()))
-    pars, pcov = curve_fit(_gaussian, xdata, Z.ravel(), pars)
+    pars, pcov = curve_fit(_gaussian, xdata, Z.ravel(), pars, bounds=bounds, ftol=0.5, xtol=0.5)
     fit = gaussian(X, Y, *pars)
 
     residuals = Z - fit
@@ -119,50 +107,93 @@ def fit_peak(Z, show=False, center=[0, 0]):
     return fit, np.asarray(pars)
 
 
-def find_beads(im, roi_size=100, n_max=100, treshold = 0.85):
-    im = bin2d(im, 2) # scale down image by factor 2
-    im -= np.median(im)
-    size = len(im)
+def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
+    @nb.njit(parallel=True, fastmath=True, cache=True)
+    def bin2d(a, K):
+        assert a.shape[0] % K == 0
+        assert a.shape[1] % K == 0
+        m_bins = a.shape[0] // K
+        n_bins = a.shape[1] // K
+        res = np.zeros((m_bins, n_bins), dtype=a.dtype)
+        for i in nb.prange(res.shape[0]):
+            for ii in range(i * K, (i + 1) * K):
+                for j in range(res.shape[1]):
+                    TMP = res[i, j]
+                    for jj in range(j * K, (j + 1) * K):
+                        TMP += a[ii, jj]
+                    res[i, j] = TMP
+        return res
 
-    cc = np.ones_like(im)
+    reduced_im = bin2d(im, 2)  # scale down image by factor 2
+    reduced_im -= np.median(reduced_im)
+    size = len(reduced_im)
+
+    cc = np.ones_like(reduced_im)
     for period in tqdm([6.5, 8.7, 10.3, 12.7], postfix='Cross correlating with ref images'):
         ref_im = create_ref_image(period, size=size)
-        cc *= np.abs(np.fft.ifft2(np.fft.fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
-    cc = np.fft.fftshift(cc).T
+        cc *= np.abs(np.fft.ifft2(np.fft.fft2(reduced_im) * np.conjugate(np.fft.fft2(ref_im))))
+    cc = np.abs(np.fft.fftshift(cc).T)
 
-    coords = pd.DataFrame(columns=['X (pix)', 'Y (pix)', 'amplitude (a.u.)',  'R2'])
-    for i in tqdm(range(n_max), postfix='Finding beads'):
-        max_index = np.asarray(np.unravel_index(np.argmax(cc, axis=None), cc.shape))
+
+    cc /= np.percentile(cc, 99.999)
+
+    cc_start = cc.copy()
+    cc *= 255.0
+
+    coords_list = []
+    for i in tqdm(range(n_max), postfix='find_beads: Finding peaks in cross-corelation'):
+        max_index = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
         roi, center = get_roi(cc, roi_size, max_index)
-        roi /= roi_size**8
         try:
             fit, pars = fit_peak(roi, center=center)
-            if pars[-1] > treshold:
-                coords.loc[i] = [pars[0] + center[0], pars[1] + center[1], pars[3], pars[-1]]
-        except RuntimeError:
+            if pars[-1] > 0:
+                coords_list.append([int(pars[0] + center[0]), int(pars[1] + center[1]), pars[3], pars[-1]])
+        except (RuntimeError, ValueError) as e:
             pass
         cc = set_roi(cc, center, roi * 0)
-    coords = coords[coords['R2'] > 0.8].sort_values('Y (pix)')
-    return coords.reset_index(drop=True)
+    coords = pd.DataFrame(coords_list, columns=['X (pix)', 'Y (pix)', 'amplitude (a.u.)', 'R2'])
+    coords.dropna(inplace=True)
+    coords.sort_values('Y (pix)', inplace=True, ascending=False)
+    coords.reset_index(drop=True, inplace=True)
+
+    if show:
+        print(coords)
+        fig = plt.figure(figsize=(6, 6))
+        im = cv2.resize(cc_start.T, (size*2, size*2))
+        plt.imshow(im, origin='lower', vmax=np.percentile(im, 99.9), cmap='gray')
+        for i, row in coords.iterrows():
+            color = 'green' if row['R2'] > treshold else 'red'
+            # color = 'blue'
+            box = plt.Rectangle((row['X (pix)'] - roi_size / 2, row['Y (pix)'] - roi_size / 2), roi_size, roi_size,
+                                edgecolor=color, facecolor='none')
+            fig.gca().add_artist(box)
+            plt.text(row['X (pix)'] - roi_size / 2, row['Y (pix)'] + roi_size / 1.9, f'{i}: {row["R2"]:.2f}',
+                     color=color)
+        plt.show()
+
+    return coords[coords['R2'] > treshold]
 
 
 if __name__ == '__main__':
-    filename = r'data\test.jpg'
+    filename = r'data\data_024.jpg'
+    # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
-    size = 1500
+    size = 2500
     im = cv2.imread(filename)[:, :, 0].astype(float)
-    # im, _ = get_roi(im, size, (4000, 4200))
+    # im, _ = get_roi(im, size)
 
-    # fig, (ax1, ax2) = plt.subplots(1, 2)
-    plt.imshow(im, origin='lower', vmax=np.percentile(im, 99.9), cmap='gray')
-    coords = find_beads(im, 100, 100, 0.8)
+    coords = find_beads(im, 100, 200, 0.75, show=True)
+    print(coords)
+
+    # plt.imshow(cc.T, origin='lower', vmax=np.percentile(cc, 99.9), cmap='gray')
+    # plt.scatter(coords['X (pix)'] / 2, coords['Y (pix)'] / 2, edgecolors='red', facecolors='none')
+    # for i, row in coords.iterrows():
+    #     plt.text(row['X (pix)'] / 2, row['Y (pix)'] / 2, f' {i}: {row["R2"]:.2f}', color='red')
+    #
+    # plt.show()
     # plt.imshow(im, origin='lower')
 
-    print(coords)
-    plt.scatter(coords['X (pix)'], coords['Y (pix)'], edgecolors='red', facecolors='none')
-    # plt.imshow(im)
-    plt.show()
     # plt.plot(im[50,])
     # plt.show()
     # cv2.imshow('image', im.astype(np.uint8))
