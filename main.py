@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 if not sys.warnoptions:
     import warnings
+
     warnings.simplefilter("ignore")
 
 
@@ -70,8 +71,8 @@ def create_circular_mask(width, size=None, center=None, steepness=3):
 
 
 def create_ref_image(period=10, width=100, size=100):
-    x = np.outer(np.linspace(-size / 2, size / 2, size), np.ones(size)) - 0.5
-    r = (x ** 2 + x.T ** 2) ** 0.5 + 1
+    x, y = np.asarray(np.meshgrid(np.arange(size), np.arange(size))) - size / 2
+    r = (x ** 2 + y ** 2) ** 0.5 + 1
     im = 0.5 * (np.cos(2 * np.pi * r / width) + 1)
     im[r >= width / 2] = 0
     return im * np.cos(2 * np.pi * r / period)
