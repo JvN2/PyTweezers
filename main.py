@@ -13,7 +13,6 @@ from tqdm import tqdm
 
 if not sys.warnoptions:
     import warnings
-
     warnings.simplefilter("ignore")
 
 
@@ -78,8 +77,7 @@ def create_ref_image(period=10, width=100, size=100):
     return im * np.cos(2 * np.pi * r / period)
 
 
-# @nb.njit(parallel=True, fastmath=True, cache=True)
-def fit_peak(Z, show=False, center=[0, 0]):
+def fit_peak(X, Y, Z, show=False):
     # Our function to fit is a two-dimensional Gaussian
     def gaussian(x, y, x0, y0, sigma, A):
         return A * np.exp(-((x - x0) / sigma) ** 2 - ((y - y0) / sigma) ** 2)
@@ -89,14 +87,11 @@ def fit_peak(Z, show=False, center=[0, 0]):
         arr = gaussian(x, y, *args)
         return arr
 
-    Z /= np.max(Z)
-    N = len(Z)
-    X, Y = np.meshgrid(np.linspace(0, N - 1, N) - N / 2 + center[0],
-                       np.linspace(0, N - 1, N) - N / 2 + center[1])
-    pars = (center[0], center[1], 2.0, np.max(Z))
-    bounds = ((center[0] - N / 2, center[1] - N / 2, 1, 0.1), (center[0] + N / 2, center[1] + N / 2, 10, 2))
+    center = np.unravel_index(np.argmax(Z, axis=None), Z.shape)
+    pars = (X[center], Y[center], 2.0, np.max(Z))
+
     xdata = np.vstack((X.ravel(), Y.ravel()))
-    pars, pcov = curve_fit(_gaussian, xdata, Z.ravel(), pars, bounds=bounds, ftol=0.5, xtol=0.5)
+    pars, pcov = curve_fit(_gaussian, xdata, Z.ravel(), pars, ftol=0.5, xtol=0.5)
     fit = gaussian(X, Y, *pars)
 
     residuals = Z - fit
@@ -124,46 +119,46 @@ def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
                     res[i, j] = TMP
         return res
 
-    reduced_im = bin2d(im, 2)  # scale down image by factor 2
+    reduction = 2  # scale down image by factor 2
+    reduced_im = bin2d(im, reduction)
     reduced_im -= np.median(reduced_im)
-    size = len(reduced_im)
 
     cc = np.ones_like(reduced_im)
     for period in tqdm([6.5, 8.7, 10.3, 12.7], postfix='Cross correlating with ref images'):
-        ref_im = create_ref_image(period, size=size)
+        ref_im = create_ref_image(period, size=len(reduced_im))
         cc *= np.abs(np.fft.ifft2(np.fft.fft2(reduced_im) * np.conjugate(np.fft.fft2(ref_im))))
-    cc = np.abs(np.fft.fftshift(cc).T)
-
-
+    cc = np.abs(np.fft.fftshift(cc))
     cc /= np.percentile(cc, 99.999)
 
-    cc_start = cc.copy()
-    cc *= 255.0
+    X, Y = np.meshgrid(np.arange(len(cc)), np.arange(len(cc)))
 
     coords_list = []
-    for i in tqdm(range(n_max), postfix='find_beads: Finding peaks in cross-corelation'):
+    for _ in tqdm(range(n_max), postfix='find_beads: Finding peaks in cross-corelation'):
         max_index = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
-        roi, center = get_roi(cc, roi_size, max_index)
+        arrays = []
+        for roi in [X, Y, cc]:
+            roi, center = get_roi(roi, roi_size, max_index)
+            arrays.append(roi)
         try:
-            fit, pars = fit_peak(roi, center=center)
-            if pars[-1] > 0:
-                coords_list.append([int(pars[0] + center[0]), int(pars[1] + center[1]), pars[3], pars[-1]])
+            fit, pars = fit_peak(*arrays)
+            if pars[3] < 0.01:
+                break
+            coords_list.append(
+                [int(pars[0] * reduction), int(pars[1] * reduction), pars[2] * reduction, pars[3], pars[-1]])
         except (RuntimeError, ValueError) as e:
             pass
-        cc = set_roi(cc, center, roi * 0)
-    coords = pd.DataFrame(coords_list, columns=['X (pix)', 'Y (pix)', 'amplitude (a.u.)', 'R2'])
-    coords.dropna(inplace=True)
-    coords.sort_values('Y (pix)', inplace=True, ascending=False)
-    coords.reset_index(drop=True, inplace=True)
+        cc = set_roi(cc, center, 0 * fit)
+
+    coords = pd.DataFrame(coords_list, columns=['X (pix)', 'Y (pix)', 'width (pix)', 'amplitude (a.u.)', 'R2'])
 
     if show:
-        print(coords)
-        fig = plt.figure(figsize=(6, 6))
-        im = cv2.resize(cc_start.T, (size*2, size*2))
+        print(coords.head(30))
+        fig = plt.figure(figsize=(12, 12))
+        # im = cv2.resize(cc_start, (size * reduction, size * reduction))
         plt.imshow(im, origin='lower', vmax=np.percentile(im, 99.9), cmap='gray')
         for i, row in coords.iterrows():
             color = 'green' if row['R2'] > treshold else 'red'
-            # color = 'blue'
+            # if color == 'green':
             box = plt.Rectangle((row['X (pix)'] - roi_size / 2, row['Y (pix)'] - roi_size / 2), roi_size, roi_size,
                                 edgecolor=color, facecolor='none')
             fig.gca().add_artist(box)
@@ -171,7 +166,10 @@ def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
                      color=color)
         plt.show()
 
-    return coords[coords['R2'] > treshold]
+    coords = coords[coords['R2'] > treshold]
+    coords.sort_values('Y (pix)', inplace=True, ascending=False)
+    coords.reset_index(drop=True, inplace=True)
+    return coords
 
 
 if __name__ == '__main__':
@@ -179,11 +177,11 @@ if __name__ == '__main__':
     # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
-    size = 2500
     im = cv2.imread(filename)[:, :, 0].astype(float)
-    # im, _ = get_roi(im, size)
+    im, _ = get_roi(im, 3500)
 
-    coords = find_beads(im, 100, 200, 0.75, show=True)
+    coords = find_beads(im, 100, 200, 0.5, show=True)
+
     print(coords)
 
     # plt.imshow(cc.T, origin='lower', vmax=np.percentile(cc, 99.9), cmap='gray')
