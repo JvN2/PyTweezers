@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numba as nb
 import numpy as np
 import pandas as pd
+from nptdms import TdmsFile
 from pylablib.devices import IMAQ
 from scipy.optimize import curve_fit
 from tqdm import tqdm
@@ -36,6 +37,15 @@ def set_roi(im, center, roi):
     return im
 
 
+def get_fft(im, low_pass=None, high_pass=None):
+    fft_im = np.fft.fftshift(np.abs(np.fft.fft2(im))) / np.prod(np.shape(im))
+    if low_pass is not None:
+        fft_im, _ = get_roi(fft_im, low_pass)
+    if high_pass is not None:
+        fft_im *= 1 - create_circular_mask(high_pass, np.shape(fft_im), steepness=2)
+    return fft_im
+
+
 def aquire_images(n_frames=100, show=True):
     cam = IMAQ.IMAQCamera()
     # print(IMAQ.list_cameras())
@@ -63,7 +73,7 @@ def create_circular_mask(width, size=None, center=None, steepness=3):
     if size is None:
         size = [width, width]
     if center is None:
-        center = -0.5 + np.asarray(size) / 2
+        center = np.asarray(size) / 2
     x = np.outer(np.linspace(0, size[0] - 1, size[0]), np.ones(size[1]))
     y = np.outer(np.ones(size[0]), np.linspace(0, size[1] - 1, size[1]))
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
@@ -91,8 +101,8 @@ def fit_peak(X, Y, Z, show=False):
     center = np.unravel_index(np.argmax(Z, axis=None), Z.shape)
     pars = (X[center], Y[center], 2.0, np.max(Z))
 
-    xdata = np.vstack((X.ravel(), Y.ravel()))
-    pars, pcov = curve_fit(_gaussian, xdata, Z.ravel(), pars, ftol=0.5, xtol=0.5)
+    M = np.vstack((X.ravel(), Y.ravel()))
+    pars, pcov = curve_fit(_gaussian, M, Z.ravel(), pars, ftol=0.5, xtol=0.5)
     fit = gaussian(X, Y, *pars)
 
     residuals = Z - fit
@@ -131,7 +141,7 @@ def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
     cc = np.abs(np.fft.fftshift(cc))
     cc /= np.percentile(cc, 99.999)
 
-    X, Y = np.meshgrid(np.arange(len(cc)), np.arange(len(cc)))
+    X, Y = np.meshgrid(reduction * np.arange(len(cc)), reduction * np.arange(len(cc)))
 
     coords_list = []
     for _ in tqdm(range(n_max), postfix='find_beads: Finding peaks in cross-corelation'):
@@ -144,8 +154,7 @@ def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
             fit, pars = fit_peak(*arrays)
             if pars[3] < 0.01:
                 break
-            coords_list.append(
-                [int(pars[0] * reduction), int(pars[1] * reduction), pars[2] * reduction, pars[3], pars[-1]])
+            coords_list.append(pars)
         except (RuntimeError, ValueError) as e:
             pass
         cc = set_roi(cc, center, 0 * fit)
@@ -178,12 +187,47 @@ if __name__ == '__main__':
     # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
-    im = cv2.imread(filename)[:, :, 0].astype(float)
-    im, _ = get_roi(im, 3500)
+    # im = cv2.imread(filename)[:, :, 0].astype(float)
+    # im, _ = get_roi(im, 3500)
 
-    coords = find_beads(im, 100, 200, 0.5, show=True)
+    # coords = find_beads(im, 100, 200, 0.5, show=False)
+    # print(coords)
 
-    print(coords)
+    ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
+    lut = [get_fft(im, 50, 15) for im in ims]
+
+    z_calib = 1000 * np.asarray(TdmsFile(filename.replace('.jpg', '.tdms'))['Tracking data']['Focus (mm)'])
+
+
+    def calc_weight(x, x_array, width):
+        weight = np.exp(-2 * (x - x_array) ** 2 / width ** 2)
+        return weight / np.sum(weight)
+
+
+    def multiply_along_axis(A, B, axis):
+        return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
+
+
+    z = np.linspace(np.min(z_calib), np.max(z_calib), int((np.max(z_calib) - np.min(z_calib)) / 0.3))
+
+    new_lut = multiply_along_axis(lut, calc_weight(50, z_calib, 0.3), 0)
+
+    plt.plot(np.sum(new_lut, axis=(1, 2)))
+    plt.show()
+
+
+    def resample_lut(z, lut, width):
+        return
+
+
+    im = lut[74]
+    diff = [np.sum((get_fft(im, 50) - l) ** 2) for l in fft_lut]
+    plt.plot(diff, 'o')
+    plt.show()
+
+    # for im in fft_lut:
+    #     cv2.imshow('image', im)
+    #     cv2.waitKey(1)
 
     # plt.imshow(cc.T, origin='lower', vmax=np.percentile(cc, 99.9), cmap='gray')
     # plt.scatter(coords['X (pix)'] / 2, coords['Y (pix)'] / 2, edgecolors='red', facecolors='none')
