@@ -182,6 +182,48 @@ def find_beads(im, roi_size=100, n_max=100, treshold=None, show=False):
     return coords
 
 
+def calc_weight(x, x_array, width):
+    weight = np.exp(-2 * (x - x_array) ** 2 / width ** 2)
+    return weight / np.sum(weight)
+
+
+def multiply_along_axis(A, B, axis):
+    return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
+
+
+class BeadTracking():
+    def __init__(self, filename=None):
+        self._from_file(filename)
+        return
+
+    def _from_file(self, filename, highpass=5, lowpass=50):
+        if '.tdms' in filename:
+            z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])
+            ims = np.fromfile(filename.replace('.tdms', 'ROI.bin'), np.uint8)
+            roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
+            ims = ims.reshape([-1, roi_size, roi_size])
+
+            z_calib = 1000 * z_calib / 1.33  # to um and correct for difference refraction index
+            lut = [get_fft(im, lowpass, highpass) for im in ims]
+
+            self._highpass = highpass
+            self._lowpass = lowpass
+            self.z_calib, self.lut = self._resample_lut(z_calib, lut)
+        return
+
+    def _resample_lut(self, z_calib, lut, step=0.3):
+        z_array = np.linspace(np.min(z_calib), np.max(z_calib), int((np.max(z_calib) - np.min(z_calib)) / step))
+        new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, step), 0), axis=0) for z in z_array]
+        return z_array, new_lut
+
+    def get_z(self, im, width=0.4):
+        fft_im = get_fft(im, self._lowpass, self._highpass)
+        msd = np.sum((self.lut - fft_im) ** 2, axis=(1, 2))
+        weight = calc_weight(self.z_calib[np.argmin(msd)], self.z_calib, width)
+        p = np.polyfit(self.z_calib, msd, 2, w=weight)
+        return -p[1] / (2 * p[0])
+
+
 if __name__ == '__main__':
     filename = r'data\data_024.jpg'
     # filename = r'data\test.jpg'
@@ -193,37 +235,25 @@ if __name__ == '__main__':
     # coords = find_beads(im, 100, 200, 0.5, show=False)
     # print(coords)
 
+    tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
     ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
-    lut = [get_fft(im, 50, 15) for im in ims]
+    z = [tracker.get_z(im) for im in ims]
 
-    z_calib = 1000 * np.asarray(TdmsFile(filename.replace('.jpg', '.tdms'))['Tracking data']['Focus (mm)'])
-
-
-    def calc_weight(x, x_array, width):
-        weight = np.exp(-2 * (x - x_array) ** 2 / width ** 2)
-        return weight / np.sum(weight)
-
-
-    def multiply_along_axis(A, B, axis):
-        return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
-
-
-    z = np.linspace(np.min(z_calib), np.max(z_calib), int((np.max(z_calib) - np.min(z_calib)) / 0.3))
-
-    new_lut = multiply_along_axis(lut, calc_weight(50, z_calib, 0.3), 0)
-
-    plt.plot(np.sum(new_lut, axis=(1, 2)))
+    plt.plot(z)
     plt.show()
+    breakpoint()
 
-
-    def resample_lut(z, lut, width):
-        return
-
-
-    im = lut[74]
-    diff = [np.sum((get_fft(im, 50) - l) ** 2) for l in fft_lut]
-    plt.plot(diff, 'o')
+    plt.imshow(lut[60], cmap='gray')
     plt.show()
+    #
+    # for im in lut:
+    #     cv2.imshow('image', im.astype(np.uint8))
+    #     cv2.waitKey(10)
+
+    # im = lut[74]
+    # diff = [np.sum((get_fft(im, 50) - l) ** 2) for l in fft_lut]
+    # plt.plot(diff, 'o')
+    # plt.show()
 
     # for im in fft_lut:
     #     cv2.imshow('image', im)
