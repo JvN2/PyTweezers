@@ -38,7 +38,7 @@ def set_roi(im, center, roi):
 
 
 def get_fft(im, low_pass=None, high_pass=None):
-    fft_im = np.fft.fftshift(np.abs(np.fft.fft2(im))) / np.prod(np.shape(im))
+    fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
     if low_pass is not None:
         fft_im, _ = get_roi(fft_im, low_pass)
     if high_pass is not None:
@@ -194,6 +194,8 @@ def multiply_along_axis(A, B, axis):
 class BeadTracking():
     def __init__(self, filename=None):
         self._from_file(filename)
+        self.refraction_index = 1.33
+        self.pix_um = 0.2
         return
 
     def _from_file(self, filename, highpass=5, lowpass=50):
@@ -203,8 +205,8 @@ class BeadTracking():
             roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
             ims = ims.reshape([-1, roi_size, roi_size])
 
-            z_calib = 1000 * z_calib / 1.33  # to um and correct for difference refraction index
-            lut = [get_fft(im, lowpass, highpass) for im in ims]
+            z_calib = 1000 * z_calib / 1.33  # to um
+            lut = [np.abs(get_fft(im, lowpass, highpass)) for im in ims]
 
             self._highpass = highpass
             self._lowpass = lowpass
@@ -216,12 +218,33 @@ class BeadTracking():
         new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, step), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
-    def get_z(self, im, width=0.4):
+    def get_xyz(self, im, width=0.4, unit='pix'):
+        def calc_extreme(self, x, y):
+            denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
+            A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
+            B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
+            return -B / (2 * A)
+
         fft_im = get_fft(im, self._lowpass, self._highpass)
-        msd = np.sum((self.lut - fft_im) ** 2, axis=(1, 2))
+
+        cc = fft_im * np.conjugate(fft_im).T
+        cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
+        peak = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
+        points = np.asarray([-1, 0, 1])
+        x = calc_extreme(self, points + peak[0], cc[peak[0] - 1:peak[0] + 2, peak[1]])
+        y = calc_extreme(self, points + peak[1], cc[peak[0], peak[1] - 1:peak[1] + 2])
+
+        xy = np.asarray(np.shape(im))*(0.5 + 0.5 * (-0.5 + np.asarray([y, x]) / self._lowpass))
+        if unit == 'um':
+            xy -= np.asarray(np.shape(im)) / 2
+            xy /= self.pix_um
+
+        msd = np.sum((self.lut - np.abs(fft_im)) ** 2, axis=(1, 2))
         weight = calc_weight(self.z_calib[np.argmin(msd)], self.z_calib, width)
         p = np.polyfit(self.z_calib, msd, 2, w=weight)
-        return -p[1] / (2 * p[0])
+        z = -p[1] / (2 * p[0])
+
+        return *xy, z
 
 
 if __name__ == '__main__':
@@ -237,9 +260,23 @@ if __name__ == '__main__':
 
     tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
     ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
-    z = [tracker.get_z(im) for im in ims]
+    pos = np.asarray([tracker.get_xyz(im) for im in ims]).T
 
-    plt.plot(z)
+    i = 50
+    plt.imshow(ims[i], cmap='gray')
+    radii = np.linspace(5, 33, 5)
+    for r in radii:
+        circle = plt.Circle(pos[:2, i], r, color='r', fill=False)
+        plt.gca().add_patch(circle)
+
+    plt.show()
+
+    # plt.plot(z)
+    # plt.show()
+    # tracker.correct_xy(ims[200])
+    xyz = np.asarray([tracker.get_xyz(im, unit='um') for im in ims]).T
+    for trace in xyz:
+        plt.plot(trace)
     plt.show()
     breakpoint()
 
