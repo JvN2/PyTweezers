@@ -89,7 +89,7 @@ def create_ref_image(period=10, width=100, size=100):
 
 
 def fit_peak(X, Y, Z, show=False):
-    # Our function to fit is a two-dimensional Gaussian
+    # Fit a two-dimensional Gaussian
     def gaussian(x, y, x0, y0, sigma, A):
         return A * np.exp(-((x - x0) / sigma) ** 2 - ((y - y0) / sigma) ** 2)
 
@@ -262,7 +262,7 @@ if __name__ == '__main__':
     ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
     pos = np.asarray([tracker.get_xyz(im) for im in ims]).T
 
-    i = 50
+    i = 150
     plt.imshow(ims[i], cmap='gray')
     radii = np.linspace(5, 33, 5)
     for r in radii:
