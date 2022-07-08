@@ -1,6 +1,7 @@
 # see https://pylablib.readthedocs.io/en/latest/devices/cameras_basics.html#cameras-basics
 
 import sys
+from functools import partial
 
 import cv2
 import matplotlib.pyplot as plt
@@ -11,6 +12,8 @@ from nptdms import TdmsFile
 from pylablib.devices import IMAQ
 from scipy.optimize import curve_fit
 from tqdm import tqdm
+import multiprocessing
+import functools
 
 if not sys.warnoptions:
     import warnings
@@ -251,7 +254,12 @@ class BeadTracking():
 
         return *xy, z
 
+    def process_roi(self, im, xy):
+        return self.get_roi_xyz(*get_roi(im, 100, *xy))
+        # return np.append(xy, [3])
+
     def process_image(self, im, frame=0):
+        cpus = multiprocessing.cpu_count()-2
         try:
             self.traces
         except AttributeError:
@@ -259,8 +267,15 @@ class BeadTracking():
                        enumerate(self.globals['X0 (pix)'])]
             self.traces = pd.DataFrame(columns=np.append(['frame'], np.reshape(columns, [-1])))
 
-        xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
-               zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
+        if False:
+            xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
+                   zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
+        else:
+            xy = np.asarray([self.globals['X0 (pix)'], self.globals['Y0 (pix)']]).astype(np.int16).T
+            func = functools.partial(self.process_roi, im)
+            with multiprocessing.Pool(processes=cpus) as pool:
+                xyz = pool.map(func, xy)
+
         self.traces.loc[len(self.traces.index)] = np.append([frame], np.reshape(xyz, [-1]))
         return self.traces
 
@@ -275,7 +290,7 @@ if __name__ == '__main__':
 
     tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
     tracker.find_beads(im, 100, 200, 0.5, show=False)
-    for frame in tqdm(range(100)):
+    for frame in tqdm(range(1)):
         tracker.process_image(im, frame)
     print(tracker.traces)
 
