@@ -259,7 +259,7 @@ class BeadTracking():
         # return np.append(xy, [3])
 
     def process_image(self, im, frame=0):
-        cpus = multiprocessing.cpu_count()-2
+        cpus = multiprocessing.cpu_count()
         try:
             self.traces
         except AttributeError:
@@ -271,7 +271,7 @@ class BeadTracking():
             xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
                    zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
         else:
-            rois = [get_roi(im, 100, int(x), int(y)) for x, y in zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
+            rois = [get_roi(im, 100, center = np.asarray([x, y]).astype(np.int32))[0] for y, x in zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
             with multiprocessing.Pool(processes=cpus) as pool:
                 xyz = pool.map(self.get_roi_xyz, rois)
 
@@ -289,7 +289,7 @@ if __name__ == '__main__':
 
     tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
     tracker.find_beads(im, 100, 200, 0.5, show=False)
-    for frame in tqdm(range(1)):
+    for frame in tqdm(range(100)):
         tracker.process_image(im, frame)
     print(tracker.traces)
 
