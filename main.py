@@ -271,10 +271,9 @@ class BeadTracking():
             xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
                    zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
         else:
-            xy = np.asarray([self.globals['X0 (pix)'], self.globals['Y0 (pix)']]).astype(np.int16).T
-            func = functools.partial(self.process_roi, im)
+            rois = [get_roi(im, 100, int(x), int(y)) for x, y in zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
             with multiprocessing.Pool(processes=cpus) as pool:
-                xyz = pool.map(func, xy)
+                xyz = pool.map(self.get_roi_xyz, rois)
 
         self.traces.loc[len(self.traces.index)] = np.append([frame], np.reshape(xyz, [-1]))
         return self.traces
