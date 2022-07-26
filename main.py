@@ -49,10 +49,14 @@ def get_fft(im, low_pass=None, high_pass=None):
     return fft_im
 
 
+def aquire_frame():
+    return IMAQ.IMAQCamera().snap()
+
+
 def aquire_images(n_frames=100, show=True):
     cam = IMAQ.IMAQCamera()
     # print(IMAQ.list_cameras())
-    # image = cam.snap()
+    image = cam.snap()
     # print(cam.get_detector_size())
     # attrs = cam.get_all_grabber_attribute_values()
 
@@ -65,9 +69,11 @@ def aquire_images(n_frames=100, show=True):
         frame, info = cam.read_oldest_image(return_info=True)
         if show:
             im = get_roi(frame, 500)
-            cv2.imshow('live cam', im)
+            cv2.imshow('live cam', frame)
             if cv2.waitKey(5) & 0xFF == ord('q'):
                 break
+            # plt.imshow(im, cmap='gray')
+            # plt.show()
     cam.stop_acquisition()
     return frame
 
@@ -152,7 +158,7 @@ class BeadTracking():
         new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, step), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
-    def find_beads(self, im, roi_size=100, n_max=100, treshold=None, show=False):
+    def find_beads(self, im, roi_size: int = 100, n_max=100, treshold=None, show=False):
         @nb.njit(parallel=True, fastmath=True, cache=True)
         def bin2d(a, K):
             assert a.shape[0] % K == 0
@@ -259,7 +265,7 @@ class BeadTracking():
         # return np.append(xy, [3])
 
     def process_image(self, im, frame=0):
-        cpus = multiprocessing.cpu_count()
+        cpus = multiprocessing.cpu_count() // 2
         try:
             self.traces
         except AttributeError:
@@ -267,11 +273,12 @@ class BeadTracking():
                        enumerate(self.globals['X0 (pix)'])]
             self.traces = pd.DataFrame(columns=np.append(['frame'], np.reshape(columns, [-1])))
 
-        if False:
+        if True:
             xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
                    zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
         else:
-            rois = [get_roi(im, 100, center = np.asarray([x, y]).astype(np.int32))[0] for y, x in zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
+            rois = [get_roi(im, 100, center=np.asarray([x, y]).astype(np.int32))[0] for y, x in
+                    zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
             with multiprocessing.Pool(processes=cpus) as pool:
                 xyz = pool.map(self.get_roi_xyz, rois)
 
@@ -284,11 +291,19 @@ if __name__ == '__main__':
     # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
-    im = cv2.imread(filename)[:, :, 0].astype(float)
-    im, _ = get_roi(im, 3500)
+
+    # im = aquire_images()
+
+    if False:
+        im = cv2.imread(filename)[:, :, 0].astype(float)
+        im, _ = get_roi(im, 3500)
+    else:
+        im = aquire_frame()
+
+    im = np.asarray(im).astype(float)
 
     tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
-    tracker.find_beads(im, 100, 200, 0.5, show=False)
+    tracker.find_beads(im, 100, 200, 0.5, show=True)
     for frame in tqdm(range(100)):
         tracker.process_image(im, frame)
     print(tracker.traces)
