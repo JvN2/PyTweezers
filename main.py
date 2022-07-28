@@ -3,7 +3,7 @@
 import sys
 from functools import partial
 
-import cv2, time
+import cv2, time, ray
 import matplotlib.pyplot as plt
 import numba as nb
 import numpy as np
@@ -16,6 +16,8 @@ import multiprocessing as mp
 from natsort import natsorted
 from pathlib import Path
 import functools
+from concurrent.futures import ThreadPoolExecutor
+from threading import RLock as TRLock
 
 if not sys.warnoptions:
     import warnings
@@ -329,6 +331,9 @@ class Traces():
                                    natsorted([c for c in self.traces.columns if ': ' in c]))
         self.traces = self.traces[reordered_cols]
 
+@ray.remote
+def get_xyz_ray(im, coord):
+    return tracker.get_roi_xyz(*get_roi(im, 100, coord))
 
 if __name__ == '__main__':
     filename = Path(r'data\data_024.jpg')
@@ -352,9 +357,8 @@ if __name__ == '__main__':
         data.to_file()
 
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    n_frames = 100
-    mode = 'multithreading'
-    mode = 'pool'
+    n_frames = 40
+    mode = 'tqdm'
 
     if mode == 'tqdm':
         xyz = []
@@ -377,10 +381,6 @@ if __name__ == '__main__':
         xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
         print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
     elif mode == 'multithreading':
-
-        from concurrent.futures import ThreadPoolExecutor
-        from threading import RLock as TRLock
-
         print(f'Starting processing ({mode})...')
         tqdm.set_lock(TRLock())
         pool_args = {}
@@ -389,6 +389,11 @@ if __name__ == '__main__':
         with ThreadPoolExecutor(**pool_args) as p:
             xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
         print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+    elif mode == 'ray':
+        xyz = []
+        for frame in tqdm(range(n_frames), postfix='tracking beads using Ray'):
+            image_id = ray.put(im)
+            xyz.append(np.reshape(ray.get([get_xyz_ray.remote(image_id, c) for c in coords]), [-1]))
     else:
         mode = 'list'
         print(f'Starting processing ... ({mode})')
