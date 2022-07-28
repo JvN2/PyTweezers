@@ -3,7 +3,7 @@
 import sys
 from functools import partial
 
-import cv2
+import cv2, time
 import matplotlib.pyplot as plt
 import numba as nb
 import numpy as np
@@ -11,8 +11,10 @@ import pandas as pd
 from nptdms import TdmsFile
 from pylablib.devices import IMAQ
 from scipy.optimize import curve_fit
-from tqdm import tqdm
-import multiprocessing
+from tqdm.auto import tqdm, trange
+import multiprocessing as mp
+from natsort import natsorted
+from pathlib import Path
 import functools
 
 if not sys.warnoptions:
@@ -139,9 +141,9 @@ class BeadTracking():
         return
 
     def _from_file(self, filename, highpass=5, lowpass=50):
-        if '.tdms' in filename:
+        if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])
-            ims = np.fromfile(filename.replace('.tdms', 'ROI.bin'), np.uint8)
+            ims = np.fromfile(str(filename).replace('.tdms', 'ROI.bin'), np.uint8)
             roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
             ims = ims.reshape([-1, roi_size, roi_size])
 
@@ -264,49 +266,143 @@ class BeadTracking():
         return self.get_roi_xyz(*get_roi(im, 100, *xy))
         # return np.append(xy, [3])
 
-    def process_image(self, im, frame=0):
-        cpus = multiprocessing.cpu_count() // 2
+    def process_image(self, im, coords):
+        xyz = [self.get_roi_xyz(*get_roi(im, 100, c)) for c in coords]
+        return np.reshape(xyz, [-1])
+
+
+class Traces():
+    def __init__(self, filename=None):
+        self.from_file(filename)
+        return
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self
+
+    def from_file(self, filename):
+        self.filename = Path(filename).with_suffix('.xlsx')
         try:
-            self.traces
-        except AttributeError:
-            columns = [[f'{i}: X (pix)', f'{i}: Y (pix)', f'{i}: Z (um)'] for i, _ in
-                       enumerate(self.globals['X0 (pix)'])]
-            self.traces = pd.DataFrame(columns=np.append(['frame'], np.reshape(columns, [-1])))
+            self.traces = pd.read_excel(self.filename, 'traces')
+        except ValueError:
+            self.traces = pd.DataFrame()
+        except FileNotFoundError:
+            self.traces = pd.DataFrame()
+            self.pars = pd.DataFrame()
+            self.globs = pd.DataFrame().squeeze()
+            return
+        try:
+            self.pars = pd.read_excel(self.filename, 'parameters', index_col=0)
+        except:
+            self.pars = pd.DataFrame()
+        try:
+            self.globs = pd.read_excel(self.filename, 'globals', index_col=0).squeeze()
+            for key, value in self.globs.iteritems():
+                if isinstance(value, str):
+                    if value[0] == '[' and value[-1] == ']':
+                        ar = value[1:-1].split(', ')
+                        ar = [a[1:-1] if a[0] == "'" else a for a in ar]
+                        self.globs.at[key] = ar
 
-        if True:
-            xyz = [self.get_roi_xyz(*get_roi(im, 100, (int(x), int(y)))) for x, y in
-                   zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
-        else:
-            rois = [get_roi(im, 100, center=np.asarray([x, y]).astype(np.int32))[0] for y, x in
-                    zip(self.globals['X0 (pix)'], self.globals['Y0 (pix)'])]
-            with multiprocessing.Pool(processes=cpus) as pool:
-                xyz = pool.map(self.get_roi_xyz, rois)
+        except ValueError:
+            self.globs = pd.DataFrame()
+        return
 
-        self.traces.loc[len(self.traces.index)] = np.append([frame], np.reshape(xyz, [-1]))
-        return self.traces
+    def to_file(self, filename=None):
+        if filename is not None:
+            self.filename = Path(filename).with_suffix('.xlsx')
+        with pd.ExcelWriter(self.filename) as writer:
+            if not self.traces.empty:
+                self.sort_traces()
+                self.traces.to_excel(writer, sheet_name='traces', index=False)
+            if not self.pars.empty:
+                self.pars.index.name = 'label'
+                self.pars.to_excel(writer, sheet_name='parameters')
+            if not self.globs.empty:
+                self.globs.to_excel(writer, sheet_name='globals')
+        return
+
+    def sort_traces(self):
+        reordered_cols = np.append([c for c in self.traces.columns if ': ' not in c],
+                                   natsorted([c for c in self.traces.columns if ': ' in c]))
+        self.traces = self.traces[reordered_cols]
 
 
 if __name__ == '__main__':
-    filename = r'data\data_024.jpg'
+    filename = Path(r'data\data_024.jpg')
+    ref_filename = Path(r'data\data_024.tdms')
     # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
-
     # im = aquire_images()
 
-    if False:
-        im = cv2.imread(filename)[:, :, 0].astype(float)
+    from_file = True
+    data = Traces(filename)
+    tracker = BeadTracking(ref_filename)
+
+    if from_file:
+        im = cv2.imread(str(filename))[:, :, 0].astype(float)
         im, _ = get_roi(im, 3500)
     else:
         im = aquire_frame()
+        im = np.asarray(im).astype(float)
+        data.pars = tracker.find_beads(im, 100, 200, 0.5, show=False)
+        data.to_file()
 
-    im = np.asarray(im).astype(float)
+    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
+    n_frames = 100
+    mode = 'multithreading'
+    mode = 'pool'
 
-    tracker = BeadTracking(filename.replace('.jpg', '.tdms'))
-    tracker.find_beads(im, 100, 200, 0.5, show=True)
-    for frame in tqdm(range(100)):
-        tracker.process_image(im, frame)
-    print(tracker.traces)
+    if mode == 'tqdm':
+        xyz = []
+        for frame in tqdm(range(n_frames), postfix='tracking beads'):
+            xyz.append(tracker.process_image(im, coords))
+    elif mode == 'pool':
+        collect_results = []
+        with mp.Pool() as pool:
+            print(f'Starting processing ({mode})...')
+            start = time.time()
+            for frame in range(n_frames):
+                collect_results.append(pool.apply_async(tracker.process_image, [im, coords, ]))
+            xyz = [np.asarray(res.get()) for res in collect_results]
+            print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+    elif mode == 'multiprocessing':
+        print(f'Starting processing ({mode})...')
+        tqdm.set_lock(mp.RLock())
+        p = mp.Pool(initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+        start = time.time()
+        xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
+        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+    elif mode == 'multithreading':
+
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import RLock as TRLock
+
+        print(f'Starting processing ({mode})...')
+        tqdm.set_lock(TRLock())
+        pool_args = {}
+        pool_args.update(initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
+        start = time.time()
+        with ThreadPoolExecutor(**pool_args) as p:
+            xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
+        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+    else:
+        mode = 'list'
+        print(f'Starting processing ... ({mode})')
+        start = time.time()
+        xyz = [tracker.process_image(im, coords) for frame in range(n_frames)]
+        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+
+    columns = np.reshape([[f'{i}: X (pix)', f'{i}: Y (pix)', f'{i}: Z (um)'] for i in data.pars.index], [-1])
+    data.traces = pd.DataFrame(xyz, columns=columns)
+    print(data.traces.tail())
+
+    # print(data.traces)
+
+    # data.to_file()
 
     # ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
     # pos = np.asarray([tracker.get_xyz(im) for im in ims]).T
