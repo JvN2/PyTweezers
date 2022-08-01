@@ -15,7 +15,7 @@ from tqdm.auto import tqdm, trange
 import multiprocessing as mp
 from natsort import natsorted
 from pathlib import Path
-import functools
+from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from threading import RLock as TRLock
 
@@ -24,6 +24,17 @@ if not sys.warnoptions:
 
     warnings.simplefilter("ignore")
 
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        print(f'Running {f.__name__:25s}', end='')
+        ts = time.time()
+        result = f(*args, **kw)
+        te = time.time()
+        print(f'-> {te-ts:9.3f} s')
+        time.sleep(3)
+        return result
+    return wrap
 
 def get_roi(im, width, center=None, size=None):
     if center is None:
@@ -44,7 +55,7 @@ def set_roi(im, center, roi):
     return im
 
 
-def get_fft(im, low_pass=None, high_pass=None):
+def calc_fft(im, low_pass=None, high_pass=None):
     fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
     if low_pass is not None:
         fft_im, _ = get_roi(fft_im, low_pass)
@@ -150,7 +161,7 @@ class BeadTracking():
             ims = ims.reshape([-1, roi_size, roi_size])
 
             z_calib = 1000 * z_calib / self.refraction_index  # to um
-            lut = [np.abs(get_fft(im, lowpass, highpass)) for im in ims]
+            lut = [np.abs(calc_fft(im, lowpass, highpass)) for im in ims]
 
             self._highpass = highpass
             self._lowpass = lowpass
@@ -232,7 +243,7 @@ class BeadTracking():
         self.globals = coords
         return coords
 
-    def get_roi_xyz(self, im, center=[0, 0], width_um=0.4, unit='pix'):
+    def get_xyz(self, im, center=[0, 0], width_um=0.4, unit='pix'):
         def calc_extreme(self, x, y):
             try:
                 denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
@@ -242,7 +253,7 @@ class BeadTracking():
             except IndexError:
                 return np.NaN
 
-        fft_im = get_fft(im, self._lowpass, self._highpass)
+        fft_im = calc_fft(im, self._lowpass, self._highpass)
 
         cc = fft_im * np.conjugate(fft_im).T
         cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
@@ -265,11 +276,11 @@ class BeadTracking():
         return *xy, z
 
     def process_roi(self, im, xy):
-        return self.get_roi_xyz(*get_roi(im, 100, *xy))
+        return self.get_xyz(*get_roi(im, 100, *xy))
         # return np.append(xy, [3])
 
     def process_image(self, im, coords):
-        xyz = [self.get_roi_xyz(*get_roi(im, 100, c)) for c in coords]
+        xyz = [self.get_xyz(*get_roi(im, 100, c)) for c in coords]
         return np.reshape(xyz, [-1])
 
 
@@ -331,9 +342,32 @@ class Traces():
                                    natsorted([c for c in self.traces.columns if ': ' in c]))
         self.traces = self.traces[reordered_cols]
 
-@ray.remote
-def get_xyz_ray(im, coord):
-    return tracker.get_roi_xyz(*get_roi(im, 100, coord))
+@timing
+def using_list_comprehension(im, coords, n_frames):
+    xyz = [tracker.process_image(im, coords) for _ in range(n_frames)]
+    return xyz
+
+@timing
+def using_pool(im, coords, n_frames):
+    collect_results = []
+    with mp.Pool() as pool:
+        for frame in range(n_frames):
+            collect_results.append(pool.apply_async(tracker.process_image, [im, coords, ]))
+        xyz = [np.asarray(res.get()) for res in collect_results]
+    return xyz
+
+@timing
+def using_pool_partial(im, coords, n_frames):
+    with mp.Pool() as pool:
+        xyz = pool.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
+    return xyz
+
+@timing
+def using_thread_pool(im, coords, n_frames):
+    with ThreadPoolExecutor() as p:
+        result = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
+    xyz = [r for r in result]
+    return xyz
 
 if __name__ == '__main__':
     filename = Path(r'data\data_024.jpg')
@@ -357,100 +391,14 @@ if __name__ == '__main__':
         data.to_file()
 
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    n_frames = 40
-    mode = 'tqdm'
+    n_frames = 10
 
-    if mode == 'tqdm':
-        xyz = []
-        for frame in tqdm(range(n_frames), postfix='tracking beads'):
-            xyz.append(tracker.process_image(im, coords))
-    elif mode == 'pool':
-        collect_results = []
-        with mp.Pool() as pool:
-            print(f'Starting processing ({mode})...')
-            start = time.time()
-            for frame in range(n_frames):
-                collect_results.append(pool.apply_async(tracker.process_image, [im, coords, ]))
-            xyz = [np.asarray(res.get()) for res in collect_results]
-            print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
-    elif mode == 'multiprocessing':
-        print(f'Starting processing ({mode})...')
-        tqdm.set_lock(mp.RLock())
-        p = mp.Pool(initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
-        start = time.time()
-        xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
-        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
-    elif mode == 'multithreading':
-        print(f'Starting processing ({mode})...')
-        tqdm.set_lock(TRLock())
-        pool_args = {}
-        pool_args.update(initializer=tqdm.set_lock, initargs=(tqdm.get_lock(),))
-        start = time.time()
-        with ThreadPoolExecutor(**pool_args) as p:
-            xyz = p.map(partial(tracker.process_image, coords=coords), [im] * n_frames)
-        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
-    elif mode == 'ray':
-        xyz = []
-        for frame in tqdm(range(n_frames), postfix='tracking beads using Ray'):
-            image_id = ray.put(im)
-            xyz.append(np.reshape(ray.get([get_xyz_ray.remote(image_id, c) for c in coords]), [-1]))
-    else:
-        mode = 'list'
-        print(f'Starting processing ... ({mode})')
-        start = time.time()
-        xyz = [tracker.process_image(im, coords) for frame in range(n_frames)]
-        print(f'Done processing ... in {n_frames / (time.time() - start):.2f}it/s.')
+    using_list_comprehension(im, coords, n_frames)
+    using_pool(im, coords, n_frames)
+    using_pool_partial(im, coords, n_frames)
+    xyz = using_thread_pool(im, coords, n_frames)
+    print()
 
     columns = np.reshape([[f'{i}: X (pix)', f'{i}: Y (pix)', f'{i}: Z (um)'] for i in data.pars.index], [-1])
     data.traces = pd.DataFrame(xyz, columns=columns)
     print(data.traces.tail())
-
-    # print(data.traces)
-
-    # data.to_file()
-
-    # ims = np.fromfile(filename.replace('.jpg', 'ROI.bin'), np.uint8).reshape([-1, 100, 100])
-    # pos = np.asarray([tracker.get_xyz(im) for im in ims]).T
-    # i = 153
-    # plt.imshow(ims[i], cmap='gray')
-    # radii = np.linspace(5, 33, 5)
-    # for r in radii:
-    #     circle = plt.Circle(pos[:2, i], r, color='r', fill=False)
-    #     plt.gca().add_patch(circle)
-    #
-    # plt.show()
-
-    # plt.plot(z)
-    # plt.show()
-    # tracker.correct_xy(ims[200])
-    # xyz = np.asarray([tracker.get_xyz(im, unit='um') for im in ims]).T
-    # for trace in xyz:
-    #     plt.plot(trace)
-    # plt.show()
-
-    #
-    # for im in lut:
-    #     cv2.imshow('image', im.astype(np.uint8))
-    #     cv2.waitKey(10)
-
-    # im = lut[74]
-    # diff = [np.sum((get_fft(im, 50) - l) ** 2) for l in fft_lut]
-    # plt.plot(diff, 'o')
-    # plt.show()
-
-    # for im in fft_lut:
-    #     cv2.imshow('image', im)
-    #     cv2.waitKey(1)
-
-    # plt.imshow(cc.T, origin='lower', vmax=np.percentile(cc, 99.9), cmap='gray')
-    # plt.scatter(coords['X (pix)'] / 2, coords['Y (pix)'] / 2, edgecolors='red', facecolors='none')
-    # for i, row in coords.iterrows():
-    #     plt.text(row['X (pix)'] / 2, row['Y (pix)'] / 2, f' {i}: {row["R2"]:.2f}', color='red')
-    #
-    # plt.show()
-    # plt.imshow(im, origin='lower')
-
-    # plt.plot(im[50,])
-    # plt.show()
-    # cv2.imshow('image', im.astype(np.uint8))
-    # cv2.waitKey(1500)
