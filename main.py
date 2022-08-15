@@ -17,7 +17,7 @@ import pandas as pd
 @time_it
 def test_aquisition(tracker, image=None):
     # producer task
-    def aquire_images(tracker, queue_raw_data1, queue_raw_data2, n_frames=100, image=None):
+    def aquire_images(tracker, queue_raw_data, n_frames=100, image=None):
         if image is None:
             cam = IMAQ.IMAQCamera()
             cam.setup_acquisition(mode="sequence", nframes=n_frames)
@@ -31,12 +31,8 @@ def test_aquisition(tracker, image=None):
         else:
             for i in tqdm(range(n_frames), postfix='Using dummy image'):
                 rois = [get_roi(image, tracker.roi_size, coord) for coord in tracker.coords]
-                if i // 2 == 0:
-                    queue_raw_data1.put([i, rois])
-                else:
-                    queue_raw_data2.put([i, rois])
-        queue_raw_data1.put(None)
-        queue_raw_data2.put(None)
+                queue_raw_data.put([i, rois])
+        queue_raw_data.put(None)
 
     # consumer task
     def process_rois(tracker, queue_raw_data, queue_processed_data, identifier):
@@ -59,20 +55,17 @@ def test_aquisition(tracker, image=None):
             result.set_index('frame', inplace=True, drop=True)
         return result
 
-    n_cores = 3
+    n_cores = 10
     n_frames = 100
-    queue_raw_data1 = Queue()
-    queue_raw_data2 = Queue()
+    queue_raw_data = Queue()
     queue_processed_data = Queue()
 
-    producer = Thread(target=aquire_images, args=(tracker, queue_raw_data1, queue_raw_data2, n_frames, image))
+    producer = Thread(target=aquire_images, args=(tracker, queue_raw_data, n_frames, image))
     producer.start()
     producer.join()
 
-    # consumers = [Thread(target=process_rois, args=(tracker, queue_raw_data, queue_processed_data, i), daemon=True) for i in
-    #              range(n_cores)]
-    consumers = [Thread(target=process_rois, args=(tracker, queue_raw_data1, queue_processed_data, 0), daemon=True),
-                 Thread(target=process_rois, args=(tracker, queue_raw_data2, queue_processed_data, 1), daemon=True)]
+    consumers = [Thread(target=process_rois, args=(tracker, queue_raw_data, queue_processed_data, i), daemon=True) for i in
+                 range(n_cores)]
     for consumer in consumers:
         consumer.start()
 
