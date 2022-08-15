@@ -21,8 +21,7 @@ def test_aquisition(tracker, image=None):
             cam = IMAQ.IMAQCamera()
             cam.setup_acquisition(mode="sequence", nframes=n_frames)
             cam.start_acquisition()
-
-            for i in tqdm(range(n_frames), postfix='Acquiring images'):
+            for _ in tqdm(range(n_frames), postfix='Acquiring images'):
                 cam.wait_for_frame()
                 frame, info = cam.read_oldest_image(return_info=True)
                 rois = [get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords]
@@ -57,8 +56,6 @@ def test_aquisition(tracker, image=None):
 
     n_cores = 15
     n_frames = 100
-    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-
     queue_raw_data = Queue()
     queue_processed_data = Queue()
 
@@ -103,16 +100,20 @@ if __name__ == '__main__':
 
     # acquire and process images
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    tracker.set_roi_coords(coords[:20])
+    tracker.set_roi_coords(coords[:100])
     data.traces = test_aquisition(tracker, im)
-    print(data.traces.tail(3))
     data.to_file()
+    print(data.traces.tail(3))
 
-    # plot positions
-    selected_cols = [col for col in data.traces.columns if 'X (pix)' in col]
-    x = data.traces[selected_cols].iloc[0].values
-    selected_cols = [col for col in data.traces.columns if 'Y (pix)' in col]
-    y = data.traces[selected_cols].iloc[0].values
-    plt.imshow(im, cmap='Greys_r', origin='lower')
-    plt.scatter(y, x)
-    plt.show()
+
+    if True:
+        # plot positions
+        selected_cols = [col for col in data.traces.columns if 'X (pix)' in col]
+        x = data.traces[selected_cols].iloc[0].values
+        selected_cols = [col for col in data.traces.columns if 'Y (pix)' in col]
+        y = data.traces[selected_cols].iloc[0].values
+        plt.imshow(im, cmap='Greys_r', origin='lower')
+        plt.scatter(y-50, x-50, s=80, facecolors='none', edgecolors='r')
+        # xy coords are not correct: to be solved
+        # probably x and y direction mixed up
+        plt.show()
