@@ -2,8 +2,9 @@
 # and https://www.askpython.com/python/producer-consumer-problem for buffering
 from pathlib import Path
 from queue import Queue
-from threading import Thread, Semaphore
+from threading import Thread
 from time import sleep
+from time import time
 
 import numpy as np
 import pandas as pd
@@ -12,29 +13,19 @@ from pylablib.devices import IMAQ
 from tqdm import tqdm
 
 from modules.TweezerImageProcessing import get_roi, Beads, Traces
-from modules.TweezersSupport import time_it
+from modules.TweezersSupport import time_it, color_text
 
 # Shared Memory variables
 CAPACITY = 100
-buffer = [-1 for i in range(CAPACITY)]
-in_index = 0
-out_index = 0
-acquisition_done = True
-
-# Declaring Semaphores
-mutex = Semaphore()
-vacant_buffer_index = Semaphore(CAPACITY)
-full = Semaphore(0)
-
+buffer = [0 for i in range(CAPACITY)]
 
 @time_it
 def test_aquisition(tracker, image=None):
     # producer task
-    def aquire_images(tracker, n_frames=100, image=None):
-        global CAPACITY, buffer, in_index, out_index, acquisition_done
-        global mutex, vacant_buffer_index, full
+    def aquire_images(tracker, buffer_index, n_frames=100, image=None):
+        global buffer
 
-        acquisition_done = False
+        index = 0
         if image is None:
             cam = IMAQ.IMAQCamera()
             cam.setup_acquisition(mode="sequence", nframes=n_frames)
@@ -44,73 +35,70 @@ def test_aquisition(tracker, image=None):
                 frame, info = cam.read_oldest_image(return_info=True)
                 rois = [get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords]
 
-                empty.acquire()
-                mutex.acquire()
-                buffer[in_index] = [info.frame_index, rois]
-                in_index = (in_index + 1) % CAPACITY
-                mutex.release()
-                full.release()
-
             cam.stop_acquisition()
         else:
             for frame_index in tqdm(range(n_frames), postfix='Acquiring images: Simulation using saved image'):
                 rois = [get_roi(image, tracker.roi_size, coord) for coord in tracker.coords]
 
-                empty.acquire()
-                mutex.acquire()
-                buffer[in_index] = [frame_index, rois]
-                in_index = (in_index + 1) % CAPACITY
-                mutex.release()
-                full.release()
+                buffer[index] = [frame_index, rois]
+                buffer_index.put(index)
+                index = (index + 1) % CAPACITY
                 sleep(0.03)
-        acquisition_done = True
+        buffer_index.put(None)
 
     # consumer task
-    def process_rois(tracker, n_frames, processed_data, identifier):
-        global CAPACITY, buffer, in_index, out_index, counter, acquisition_done
-        global mutex, vacant_buffer_index, full
+    def process_rois(tracker, buffer_index, n_frames, processed_data, identifier):
+        global buffer
 
         while True:
-            full.acquire(timeout=0.5)
-            mutex.acquire(timeout=0.5)
-            item = buffer[out_index]
-            out_index = (out_index + 1) % CAPACITY
-            mutex.release()
-            empty.release()
-
-            result = [tracker.get_xyza(*roi) for roi in item[1]]
-            result = np.asarray(np.append([item[0], identifier], np.reshape(result, (-1))))
-
-            processed_data.put(result)
-            if processed_data.qsize() >= n_frames-1:
+            index = buffer_index.get()
+            if index is None:
+                buffer_index.put(index)
                 break
+            item = buffer[index]
+            result = [tracker.get_xyza(*roi) for roi in item[1]]
+            # result = [[np.NaN]*4 for roi in item[1]]
+            result = np.asarray(np.append([item[0], identifier], np.reshape(result, (-1))))
+            processed_data.put(result)
 
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
-            result.columns = ['frame', 'cpu' ] + list(
-                np.reshape([[f'{i}: {p}' for p in pars] for i in range(len(result.columns) // len(pars))], -1))
+            numbered_pars = [par for par in pars if '%' in par]
+            shared_pars = [par for par in pars if '%' not in par]
+
+            result.columns = shared_pars + list(
+                np.reshape([[p.replace('%', f'{i}') for p in numbered_pars] for i in
+                            range(len(result.columns) // len(numbered_pars))], -1))
             result.set_index('frame', inplace=True, drop=True)
         return result.sort_index()
 
     # Start combined acquisition and processing
-    n_cores = 3
+    n_cores = 1
     n_frames = 100
     processed_data = Queue()
+    buffer_index = Queue()
 
-    producer = [Thread(target=aquire_images, args=(tracker, n_frames, image))]
-    consumers = [Thread(target=process_rois, args=(tracker, n_frames, processed_data, i), daemon=True) for i
+    producer = [Thread(target=aquire_images, args=(tracker, buffer_index, n_frames, image))]
+    consumers = [Thread(target=process_rois, args=(tracker, buffer_index, n_frames, processed_data, i), daemon=True) for
+                 i
                  in range(n_cores)]
+
+    t_start = time()
     for proces in consumers + producer:
         proces.start()
 
     for proces in consumers + producer:
         proces.join()
 
-    results = get_queue(processed_data, pars=['X (pix)', 'Y (pix)', 'Z (um)', 'A (a.u.)'])
+    print(color_text(0, 100, 0,
+                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
 
-    return results
-
+    try:
+        results = get_queue(processed_data, pars=['frame', 'cpu', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+        return results
+    except ValueError:
+        return None
 
 if __name__ == '__main__':
     print()
