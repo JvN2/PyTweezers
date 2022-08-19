@@ -1,21 +1,25 @@
-# Inspired by SuperFastPython.com -> example of one producer and multiple consumers with threads
-# and https://www.askpython.com/python/producer-consumer-problem for buffering
-from pathlib import Path
-from queue import Queue
-from threading import Thread
-from time import sleep
-from time import time
+from modules.TweezerImageProcessing import get_xyza
+import multiprocessing as mp
 
-import numpy as np
-import pandas as pd
-from cv2 import imread
-from pylablib.devices import IMAQ
-from tqdm import tqdm
+q = mp.Queue()
 
-from modules.TweezerImageProcessing import get_roi, get_xyza, Beads, Traces
-from modules.TweezersSupport import time_it, color_text
+def f(x):
+    # z = q.get()
+    # print(z)
+    for i in range(200):
+        # ---bonus: gradually use up RAM---
+        x += 10000  # linear growth; use exponential for faster ending: x *= 1.01
+        y = list(range(int(x)))
+        # ---------------------------------
+    return x
 
-ref_filename = Path(r'data\data_024.tdms')
-tracker = Beads(ref_filename)
+if __name__ == '__main__':  # name guard to avoid recursive fork on Windows
 
-print(tracker.get_processing_settings())
+    n = mp.cpu_count()  # multiply guard against counting only active cores
+    for i in range(n):
+        q.put(i+5)
+
+    print('starting pool')
+    with mp.Pool(n) as p:
+        result = p.map(f, range(n))
+    print(result)

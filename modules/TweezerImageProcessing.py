@@ -61,7 +61,7 @@ def get_roi(im, width, center=None):
     bl = np.clip(bl, 0, np.asarray(np.shape(im)) - width)
     tr = bl + width
     roi = im[bl[0]:tr[0], bl[1]:tr[1]]
-    return {'image':roi, 'center': bl + width // 2}
+    return {'image': roi, 'center': bl + width // 2}
 
 
 def set_roi(im, center, roi):
@@ -93,13 +93,13 @@ def calc_weight(x, x_array, width):
 
 def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
     def calc_extreme(x, y):
-        try:
-            denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
-            A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
-            B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
-            return -B / (2 * A)
-        except IndexError:
-            return np.NaN
+        # try:
+        denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
+        A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
+        B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
+        return -B / (2 * A)
+        # except IndexError:
+        #     return np.NaN
 
     fft_im = calc_fft(im, *filter)
     cc = fft_im * np.conjugate(fft_im).T
@@ -118,6 +118,9 @@ def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
     z = -p[1] / (2 * p[0])
 
     return *xy, z, np.max(cc)
+    # for i in range(5000):
+    #     x = 134411523522254666665414**3
+    # return 1.0, 2.0, 3.0, 4.0
 
 
 class Beads():

@@ -1,8 +1,13 @@
 # Inspired by SuperFastPython.com -> example of one producer and multiple consumers with threads
 # and https://www.askpython.com/python/producer-consumer-problem for buffering
+
+# Using multithreading
+
+
 from pathlib import Path
 from queue import Queue
 from threading import Thread
+from multiprocessing import Process
 from time import sleep
 from time import time
 
@@ -20,8 +25,8 @@ CAPACITY = 100
 buffer = [0 for i in range(CAPACITY)]
 
 
-@time_it
-def test_aquisition(acquisition_settings, processing_settings, image=None):
+# @time_it
+def test_acquisition(acquisition_settings, processing_settings, image=None):
     # producer task
     def aquire_images(settings, buffer_index, n_frames=100, image=None):
         global buffer
@@ -57,7 +62,7 @@ def test_aquisition(acquisition_settings, processing_settings, image=None):
                 break
             item = buffer[index]
 
-            if False:
+            if True:
                 if item['frame'] == 0:
                     print(color_text(0, 50, 0, 'Real processing ;-)'))
                 result = [get_xyza(roi['image'], settings['lut'], settings['lut_z_um'], roi['center']) for roi in item['rois']]
@@ -82,12 +87,12 @@ def test_aquisition(acquisition_settings, processing_settings, image=None):
         return result.sort_index()
 
     # Start combined acquisition and processing
-    n_cores = 10
+    n_threads = 1
     processed_data = Queue()
     buffer_index = Queue()
     n_images = 100
 
-    threads = [Thread(target=process_rois, args=(processing_settings, buffer_index, processed_data, i)) for i in range(n_cores)]
+    threads = [Thread(target=process_rois, args=(processing_settings, buffer_index, processed_data, i)) for i in range(n_threads)]
     threads.append(Thread(target=aquire_images, args=(acquisition_settings, buffer_index, n_images, image)))
     t_start = time()
     for thread in threads:
@@ -96,7 +101,7 @@ def test_aquisition(acquisition_settings, processing_settings, image=None):
     for thread in threads:
         thread.join()
     print(color_text(0, 100, 0,
-                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
+                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_threads} processing threads'))
 
     try:
         results = get_queue(processed_data,
@@ -130,9 +135,9 @@ if __name__ == '__main__':
 
     # acquire and process images
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    tracker.set_roi_coords(coords)
+    tracker.set_roi_coords(coords[:50])
 
-    data.traces = test_aquisition(tracker.get_acquisition_settings(), tracker.get_processing_settings(), im)
+    data.traces = test_acquisition(tracker.get_acquisition_settings(), tracker.get_processing_settings(), im)
     # data.to_file()
     print(data.traces.tail(3))
 
