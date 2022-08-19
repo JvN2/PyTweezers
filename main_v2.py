@@ -19,6 +19,7 @@ from modules.TweezersSupport import time_it, color_text
 CAPACITY = 100
 buffer = [0 for i in range(CAPACITY)]
 
+
 @time_it
 def test_aquisition(tracker, image=None):
     # producer task
@@ -47,7 +48,7 @@ def test_aquisition(tracker, image=None):
         buffer_index.put(None)
 
     # consumer task
-    def process_rois(tracker, buffer_index, n_frames, processed_data, identifier):
+    def process_rois(tracker, buffer_index, processed_data, identifier):
         global buffer
 
         while True:
@@ -56,8 +57,9 @@ def test_aquisition(tracker, image=None):
                 buffer_index.put(index)
                 break
             item = buffer[index]
-            result = [tracker.get_xyza(*roi) for roi in item[1]]
-            # result = [[np.NaN]*4 for roi in item[1]]
+            sleep(1 / 5)
+            # result = [tracker.get_xyza(*roi) for roi in item[1]]
+            result = [[np.NaN] * 4 for roi in item[1]]
             result = np.asarray(np.append([item[0], identifier], np.reshape(result, (-1))))
             processed_data.put(result)
 
@@ -74,15 +76,13 @@ def test_aquisition(tracker, image=None):
         return result.sort_index()
 
     # Start combined acquisition and processing
-    n_cores = 1
-    n_frames = 100
+    n_cores = 40
     processed_data = Queue()
     buffer_index = Queue()
+    n_images = 100
 
-    producer = [Thread(target=aquire_images, args=(tracker, buffer_index, n_frames, image))]
-    consumers = [Thread(target=process_rois, args=(tracker, buffer_index, n_frames, processed_data, i), daemon=True) for
-                 i
-                 in range(n_cores)]
+    producer = [Thread(target=aquire_images, args=(tracker, buffer_index, n_images, image))]
+    consumers = [Thread(target=process_rois, args=(tracker, buffer_index, processed_data, i)) for i in range(n_cores)]
 
     t_start = time()
     for proces in consumers + producer:
@@ -95,10 +95,12 @@ def test_aquisition(tracker, image=None):
                      f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
 
     try:
-        results = get_queue(processed_data, pars=['frame', 'cpu', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+        results = get_queue(processed_data,
+                            pars=['frame', 'cpu', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
         return results
     except ValueError:
         return None
+
 
 if __name__ == '__main__':
     print()
@@ -115,19 +117,19 @@ if __name__ == '__main__':
         im = imread(str(filename))[:, :, 0].astype(float).T
     else:
         im = imread(str(filename))[:, :, 0]
-        data.pars = tracker.find_beads(im, 200, 0.6, show=False)
+        data.pars = tracker.find_beads(im, 200, 0.6, show=True)
         data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
         data.to_file()
-        im = None
+        # im = None
 
     print(data.pars.tail(3))
 
     # acquire and process images
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    tracker.set_roi_coords(coords[:100])
+    tracker.set_roi_coords(coords)
     data.traces = test_aquisition(tracker, im)
     # data.to_file()
-    print(data.traces.tail(3))
+    print(data.traces.tail(30))
 
     if False:
         # plot positions

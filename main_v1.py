@@ -1,17 +1,18 @@
 # Inspired by SuperFastPython.com -> example of one producer and multiple consumers with threads
+from pathlib import Path
 from queue import Queue
 from threading import Thread
-from multiprocess import Process
-from modules.TweezersSupport import time_it
-from modules.TweezerImageProcessing import get_roi, Beads, Traces
-from pylablib.devices import IMAQ
-from tqdm import tqdm
-from pathlib import Path
-from cv2 import imread
+from time import time
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from cv2 import imread
+from pylablib.devices import IMAQ
+from tqdm import tqdm
+
+from modules.TweezerImageProcessing import get_roi, Beads, Traces
+from modules.TweezersSupport import color_text
+from modules.TweezersSupport import time_it
 
 
 @time_it
@@ -41,8 +42,8 @@ def test_aquisition(tracker, image=None):
             if item is None:
                 queue_raw_data.put(item)
                 break
-            # result = [[*x[1], np.mean(x[0]), np.std(x[0])] for x in item[1]]
-            result = [tracker.get_xyza(roi[0], roi[1]) for roi in item[1]]
+            # sleep(1/5)
+            result = [tracker.get_xyza(*roi) for roi in item[1]]
             # result = [[np.NaN]*4 for roi in item[1]]
 
             result = np.append(item[0], np.reshape(result, (-1)))
@@ -51,33 +52,41 @@ def test_aquisition(tracker, image=None):
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
-            result.columns = ['frame'] + list(
-                np.reshape([[f'{i}: {p}' for p in pars] for i in range(len(result.columns) // len(pars))], -1))
+            numbered_pars = [par for par in pars if '%' in par]
+            shared_pars = [par for par in pars if '%' not in par]
+
+            result.columns = shared_pars + list(
+                np.reshape([[p.replace('%', f'{i}') for p in numbered_pars] for i in
+                            range(len(result.columns) // len(numbered_pars))], -1))
             result.set_index('frame', inplace=True, drop=True)
-        return result
+        return result.sort_index()
 
-    n_cores = 1
+    # Start combined acquisition and processing
+    n_cores = 4
+    raw_data = Queue()
+    processed_data = Queue()
     n_frames = 100
-    queue_raw_data = Queue()
-    queue_processed_data = Queue()
 
-    producer = Thread(target=aquire_images, args=(tracker, queue_raw_data, n_frames, image))
-    producer.start()
-    producer.join()
+    producer = [Thread(target=aquire_images, args=(tracker, raw_data, n_frames, image))]
+    consumers = [Thread(target=process_rois, args=(tracker, raw_data, processed_data, i), daemon=True) for
+                 i
+                 in range(n_cores)]
 
-    consumers = [Thread(target=process_rois, args=(tracker, queue_raw_data, queue_processed_data, i), daemon=True) for i in
-                 range(n_cores)]
-    for consumer in consumers:
-        consumer.start()
+    t_start = time()
+    for proces in consumers + producer:
+        proces.start()
 
-    # wait for all threads to finish
+    for proces in consumers + producer:
+        proces.join()
 
-    for consumer in consumers:
-        consumer.join()
+    print(color_text(0, 100, 0,
+                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
 
-    results = get_queue(queue_processed_data, pars=['X (pix)', 'Y (pix)', 'Z (um)', 'A (a.u.)'])
-
-    return results
+    try:
+        results = get_queue(processed_data, pars=['frame', 'cpu', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+        return results
+    except ValueError:
+        return None
 
 
 if __name__ == '__main__':
@@ -105,7 +114,7 @@ if __name__ == '__main__':
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
     tracker.set_roi_coords(coords[:100])
     data.traces = test_aquisition(tracker, im)
-    data.to_file()
+    # data.to_file()
     print(data.traces.tail(3))
 
     if False:

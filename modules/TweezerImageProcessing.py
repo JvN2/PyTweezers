@@ -1,13 +1,12 @@
-from nptdms import TdmsFile
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import cv2
-from tqdm.auto import tqdm
 from natsort import natsorted
-from pathlib import Path
+from nptdms import TdmsFile
 from scipy.optimize import curve_fit
-from modules.TweezersSupport import time_it
+from tqdm.auto import tqdm
 
 
 def create_circular_mask(width, size=None, center=None, steepness=3):
@@ -15,6 +14,7 @@ def create_circular_mask(width, size=None, center=None, steepness=3):
         size = [width, width]
     if center is None:
         center = np.asarray(size) / 2
+
     x = np.outer(np.linspace(0, size[0] - 1, size[0]), np.ones(size[1]))
     y = np.outer(np.ones(size[0]), np.linspace(0, size[1] - 1, size[1]))
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
@@ -61,7 +61,7 @@ def get_roi(im, width, center=None):
     bl = np.clip(bl, 0, np.asarray(np.shape(im)) - width)
     tr = bl + width
     roi = im[bl[0]:tr[0], bl[1]:tr[1]]
-    return roi, bl + width // 2
+    return {'image':roi, 'center': bl + width // 2}
 
 
 def set_roi(im, center, roi):
@@ -71,12 +71,18 @@ def set_roi(im, center, roi):
     return im
 
 
-def calc_fft(im, low_pass=None, high_pass=None):
+def multiply_along_axis(A, B, axis):
+    return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
+
+
+def calc_fft(im, lowpass=None, highpass=None):
     fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
-    if low_pass is not None:
-        fft_im, _ = get_roi(fft_im, low_pass)
-    if high_pass is not None:
-        fft_im *= 1 - create_circular_mask(high_pass, np.shape(fft_im), steepness=2)
+
+    if lowpass is not None:
+        fft_im = get_roi(fft_im, lowpass)['image']
+    if highpass is not None:
+        fft_im *= 1 - create_circular_mask(highpass, np.shape(fft_im), steepness=2)
+
     return fft_im
 
 
@@ -85,8 +91,33 @@ def calc_weight(x, x_array, width):
     return weight / np.sum(weight)
 
 
-def multiply_along_axis(A, B, axis):
-    return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
+def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
+    def calc_extreme(x, y):
+        try:
+            denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
+            A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
+            B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
+            return -B / (2 * A)
+        except IndexError:
+            return np.NaN
+
+    fft_im = calc_fft(im, *filter)
+    cc = fft_im * np.conjugate(fft_im).T
+    cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
+    peak = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
+    points = np.asarray([-1, 0, 1])
+    x = calc_extreme(points + peak[0], cc[peak[0] - 1:peak[0] + 2, peak[1]])
+    y = calc_extreme(points + peak[1], cc[peak[0], peak[1] - 1:peak[1] + 2])
+
+    xy = np.asarray(np.shape(im)) * (0.5 + 0.5 * (-0.5 + np.asarray([y, x]) / filter[0]))
+    xy += center
+
+    msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
+    weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
+    p = np.polyfit(lut_z_um, msd, 2, w=weight)
+    z = -p[1] / (2 * p[0])
+
+    return *xy, z, np.max(cc)
 
 
 class Beads():
@@ -169,6 +200,7 @@ class Beads():
             # print(coords.head(30))
             fig = plt.figure(figsize=(12, 12))
             plt.imshow(im, origin='lower', vmax=np.percentile(im, 99.9), cmap='Greys_r')
+            roi_size = 100
             for i, row in coords.iterrows():
                 color = 'green' if row['R2'] > treshold else 'red'
                 # if color == 'green':
@@ -189,45 +221,22 @@ class Beads():
     def set_roi_coords(self, coords):
         self.coords = coords
 
-    def get_xyza(self, im, center=[0, 0], width_um=0.4, unit='pix'):
-        def calc_extreme(self, x, y):
-            try:
-                denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
-                A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
-                B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
-                return -B / (2 * A)
-            except IndexError:
-                return np.NaN
-
-        fft_im = calc_fft(im, self._lowpass, self._highpass)
-
-        cc = fft_im * np.conjugate(fft_im).T
-        cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
-        peak = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
-        points = np.asarray([-1, 0, 1])
-        x = calc_extreme(self, points + peak[0], cc[peak[0] - 1:peak[0] + 2, peak[1]])
-        y = calc_extreme(self, points + peak[1], cc[peak[0], peak[1] - 1:peak[1] + 2])
-
-        xy = np.asarray(np.shape(im)) * (0.5 + 0.5 * (-0.5 + np.asarray([y, x]) / self._lowpass))
-        xy += center
-        if unit == 'um':
-            xy -= np.asarray(np.shape(im)) / 2
-            xy /= self.pix_um
-
-        msd = np.sum((self.lut - np.abs(fft_im)) ** 2, axis=(1, 2))
-        weight = calc_weight(self.z_calib[np.argmin(msd)], self.z_calib, width_um)
-        p = np.polyfit(self.z_calib, msd, 2, w=weight)
-        z = -p[1] / (2 * p[0])
-
-        return *xy, z, np.max(cc)
-
     def process_roi(self, im, xy):
-        return self.get_xyza(*get_roi(im, 100, *xy))
+        return get_xyza(*get_roi(im, 100, *xy))
         # return np.append(xy, [3])
 
     def process_image(self, im, coords):
-        xyz = [self.get_xyza(*get_roi(im, 100, c)) for c in coords]
+        xyz = [get_xyza(*get_roi(im, 100, c)) for c in coords]
         return np.reshape(xyz, [-1])
+
+    def get_acquisition_settings(self):
+        settings = {'coords': self.coords, 'size': self.roi_size}
+        return settings
+
+    def get_processing_settings(self):
+        settings = {'lowpass': self._lowpass, 'highpass': self._highpass, 'lut': self.lut, 'lut_z_um': self.z_calib,
+                    'pix_um': self.pix_um}
+        return settings
 
 
 class Traces():
@@ -323,4 +332,3 @@ class Traces():
             self.globs = pd.DataFrame(columns=['parameter', 'value', 'section'])
             self.globs.loc[0] = [parameter, value, section]
             self.globs.set_index('parameter', inplace=True)
-
