@@ -46,7 +46,7 @@ def process_rois(settings, raw_data, processed_data, identifier):
             raw_data.put(None)
             break
 
-        compute = True
+        compute = False
         if compute:
             result = [get_xyza(item['image'], settings['lut'], settings['lut_z_um'], item['center']) for item in
                       item['rois']]
@@ -71,7 +71,7 @@ def test_acquisition(acquisition_settings, processing_settings, image=None):
         return result.sort_index()
 
     # Start combined acquisition and processing
-    n_cores = 3
+    n_cores = 1
     manager = Manager()
     processed_data = manager.Queue()
     raw_data = manager.Queue()

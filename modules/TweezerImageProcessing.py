@@ -7,6 +7,7 @@ from natsort import natsorted
 from nptdms import TdmsFile
 from scipy.optimize import curve_fit
 from tqdm.auto import tqdm
+import pyfftw as pw
 
 
 def create_circular_mask(width, size=None, center=None, steepness=3):
@@ -76,7 +77,9 @@ def multiply_along_axis(A, B, axis):
 
 
 def calc_fft(im, lowpass=None, highpass=None):
-    fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
+    # fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
+    fft_im = np.fft.fftshift(pw.builders.f  ft2(im)) / np.prod(np.shape(im))
+
 
     if lowpass is not None:
         fft_im = get_roi(fft_im, lowpass)['image']
@@ -103,7 +106,8 @@ def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
 
     fft_im = calc_fft(im, *filter)
     cc = fft_im * np.conjugate(fft_im).T
-    cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
+    # cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
+    cc = np.fft.fftshift(np.abs(pw.builders.ifft2(cc)))
     peak = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
     points = np.asarray([-1, 0, 1])
     x = calc_extreme(points + peak[0], cc[peak[0] - 1:peak[0] + 2, peak[1]])
@@ -237,8 +241,8 @@ class Beads():
         return settings
 
     def get_processing_settings(self):
-        settings = {'lowpass': self._lowpass, 'highpass': self._highpass, 'lut': self.lut, 'lut_z_um': self.z_calib,
-                    'pix_um': self.pix_um}
+        settings = {'coords': self.coords, 'size': self.roi_size, 'lowpass': self._lowpass, 'highpass': self._highpass,
+                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um}
         return settings
 
 
