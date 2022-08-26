@@ -1,42 +1,36 @@
-# Inspired by SuperFastPython.com -> example of one producer and multiple consumers with threads
-# and https://www.askpython.com/python/producer-consumer-problem for buffering
-
-# Using multiprocessing
-
-from multiprocessing import Process, Manager
 from pathlib import Path
-from time import sleep
 from time import time
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from cv2 import imread
-from pylablib.devices import IMAQ
 from tqdm import tqdm
+from multiprocessing import Process, Manager
 
-from modules.TweezerImageProcessing import get_roi, get_xyza, Beads, Traces
+from modules.TweezerImageProcessing import proces_image, Beads, Traces, get_roi, get_xyza
 from modules.TweezersSupport import color_text
 
-# @time_it
+
 
 # producer task
 def aquire_images(settings, raw_data, n_frames=100, image=None):
     if image is None:
-        cam = IMAQ.IMAQCamera()
-        cam.setup_acquisition(mode="sequence", nframes=n_frames)
-        cam.start_acquisition()
-        for _ in tqdm(range(n_frames), postfix='Acquiring images'):
-            cam.wait_for_frame()
-            frame, info = cam.read_oldest_image(return_info=True)
-            rois = [get_roi(frame, settings['size'], coord) for coord in settings['coords']]
-            raw_data.put({'frame': info.frame_index, 'rois': rois})
-        cam.stop_acquisition()
+        print('IMAQ not implemented')
+        # cam = IMAQ.IMAQCamera()
+        # cam.setup_acquisition(mode="sequence", nframes=n_frames)
+        # cam.start_acquisition()
+        # for _ in tqdm(range(n_frames), postfix='Acquiring images'):
+        #     cam.wait_for_frame()
+        #     frame, info = cam.read_oldest_image(return_info=True)
+        #     rois = [get_roi(frame, settings['size'], coord) for coord in settings['coords']]
+        #     raw_data.put({'frame': info.frame_index, 'rois': rois})
+        # cam.stop_acquisition()
     else:
          for frame_index in tqdm(range(n_frames), postfix='Acquiring images: Simulation using saved image'):
             rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
             raw_data.put({'frame': frame_index, 'rois': rois})
     raw_data.put(None)
-
 
 # consumer task
 def process_rois(settings, raw_data, processed_data, identifier):
@@ -46,18 +40,12 @@ def process_rois(settings, raw_data, processed_data, identifier):
             raw_data.put(None)
             break
 
-        compute = False
-        if compute:
-            result = [get_xyza(item['image'], settings['lut'], settings['lut_z_um'], item['center']) for item in
-                      item['rois']]
-        else:
-            result = [[np.NaN] * 4 for roi in item['rois']]
-            sleep(0.2)  # for ~20 fps @ 1CPU
+        result = [get_xyza(roi, settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in item['rois']]
+
         result = np.asarray(np.append([item['frame']], np.reshape(result, (-1))))
         processed_data.put(result)
 
-
-def test_acquisition(acquisition_settings, processing_settings, image=None):
+def test_multi_processing(settings, image, n_images = 10):
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
@@ -71,15 +59,15 @@ def test_acquisition(acquisition_settings, processing_settings, image=None):
         return result.sort_index()
 
     # Start combined acquisition and processing
-    n_cores = 1
+    n_cores = 4
     manager = Manager()
     processed_data = manager.Queue()
     raw_data = manager.Queue()
     n_images = 100
 
-    consumers = [Process(target=process_rois, args=(processing_settings, raw_data, processed_data, i,)) for
+    consumers = [Process(target=process_rois, args=(settings, raw_data, processed_data, i,)) for
                  i in range(n_cores)]
-    producer = Process(target=aquire_images, args=(acquisition_settings, raw_data, n_images, image))
+    producer = Process(target=aquire_images, args=(settings, raw_data, n_images, image))
 
     t_start = time()
     for process in [producer] + consumers:
@@ -87,14 +75,48 @@ def test_acquisition(acquisition_settings, processing_settings, image=None):
 
     for process in [producer] + consumers:
         process.join()
+
+    dt = time() - t_start
     print(color_text(0, 100, 0,
-                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
+                     f'Acquisition + processing time = {dt:.3f} s for {n_cores} processing threads; {n_images/dt:.1f} frames/s'))
 
     try:
         results = get_queue(processed_data, pars=['frame', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
         return results
     except ValueError:
         return None
+
+
+def convert_result(result, pars=None):
+    result = pd.DataFrame(result)
+
+    if pars is not None:
+        numbered_pars = [par for par in pars if '%' in par]
+        shared_pars = [par for par in pars if '%' not in par]
+
+        result.columns = shared_pars + list(
+            np.reshape([[p.replace('%', f'{i}') for p in numbered_pars] for i in
+                        range(len(result.columns) // len(numbered_pars))], -1))
+        result.set_index('frame', inplace=True, drop=True)
+    return result.sort_index()
+
+
+def test_acquisition(settings, image=None, show=False):
+    n_images = 50
+    results = []
+    start = time()
+    for i in tqdm(range(n_images), postfix='Acquiring images: Simulation using saved image'):
+        results.append(proces_image(i, image, settings))
+    print(color_text(0, 100, 0, f'Computed in {n_images / (time() - start):.3f} frames/s'))
+    df = convert_result(results, pars=['frame', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+    print(df.tail(4))
+
+    if show:
+        x = [df.iloc[0][f'{i}: X (pix)'] for i, _ in enumerate(settings['coords'])]
+        y = [df.iloc[0][f'{i}: Y (pix)'] for i, _ in enumerate(settings['coords'])]
+        plt.imshow(image.T, cmap='Greys_r')
+        plt.scatter(x, y)
+        plt.show()
 
 
 if __name__ == '__main__':
@@ -123,18 +145,6 @@ if __name__ == '__main__':
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
     tracker.set_roi_coords(coords)
 
-    data.traces = test_acquisition(tracker.get_acquisition_settings(), tracker.get_settings(), im)
-    # data.to_file()
-    print(data.traces.tail(3))
-
-    if False:
-        # plot positions
-        selected_cols = [col for col in data.traces.columns if 'X (pix)' in col]
-        x = data.traces[selected_cols].iloc[0].values
-        selected_cols = [col for col in data.traces.columns if 'Y (pix)' in col]
-        y = data.traces[selected_cols].iloc[0].values
-        plt.imshow(im, cmap='Greys_r', origin='lower')
-        plt.scatter(y - 50, x - 50, s=80, facecolors='none', edgecolors='r')
-        # xy coords are not correct: to be solved
-        # probably x and y direction mixed up
-        plt.show()
+    # data.traces = test_acquisition(tracker.get_settings(), im, show=True)
+    # test2(im, tracker.get_settings())
+    test_multi_processing(tracker.get_settings(), im)

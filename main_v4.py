@@ -127,7 +127,7 @@ if __name__ == '__main__':
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
     tracker.set_roi_coords(coords)
 
-    data.traces = test_acquisition(tracker.get_acquisition_settings(), tracker.get_processing_settings(), im)
+    data.traces = test_acquisition(tracker.get_acquisition_settings(), tracker.get_settings(), im)
     # data.to_file()
     print(data.traces.tail(3))
 

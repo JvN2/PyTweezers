@@ -6,8 +6,16 @@ import pandas as pd
 from natsort import natsorted
 from nptdms import TdmsFile
 from scipy.optimize import curve_fit
+from scipy.signal import ZoomFFT
 from tqdm.auto import tqdm
-import pyfftw as pw
+
+
+def zoom_fft2(A, m, fmax):
+    n = A.shape[0]
+    f = ZoomFFT(n, m=m, fn=[-fmax, fmax])
+    FFT = f(A, axis=0)
+    FFT = f(FFT, axis=1)
+    return FFT
 
 
 def create_circular_mask(width, size=None, center=None, steepness=3):
@@ -76,16 +84,19 @@ def multiply_along_axis(A, B, axis):
     return np.swapaxes(np.swapaxes(A, axis, -1) * B, -1, axis)
 
 
-def calc_fft(im, lowpass=None, highpass=None):
-    # fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
-    fft_im = np.fft.fftshift(pw.builders.f  ft2(im)) / np.prod(np.shape(im))
-
-
-    if lowpass is not None:
-        fft_im = get_roi(fft_im, lowpass)['image']
+def create_filter(lowpass, highpass=None):
+    filter = create_circular_mask(lowpass, [lowpass, lowpass], steepness=2)
     if highpass is not None:
-        fft_im *= 1 - create_circular_mask(highpass, np.shape(fft_im), steepness=2)
+        filter *= 1 - create_circular_mask(highpass, np.shape(filter), steepness=2)
+    return filter
 
+
+def calc_fft(im, filter=None):
+    fft_im = np.fft.fftshift(np.fft.fft2(im)) / np.prod(np.shape(im))
+    if filter is not None:
+        if np.shape(im) != np.shape(filter):
+            fft_im = get_roi(fft_im, np.shape(filter)[0])['image']
+        fft_im *= filter
     return fft_im
 
 
@@ -94,27 +105,26 @@ def calc_weight(x, x_array, width):
     return weight / np.sum(weight)
 
 
-def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
+def get_peak_position(im):
     def calc_extreme(x, y):
-        # try:
         denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
         A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
         B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
         return -B / (2 * A)
-        # except IndexError:
-        #     return np.NaN
 
-    fft_im = calc_fft(im, *filter)
-    cc = fft_im * np.conjugate(fft_im).T
-    # cc = np.fft.fftshift(np.abs(np.fft.ifft2(cc)))
-    cc = np.fft.fftshift(np.abs(pw.builders.ifft2(cc)))
-    peak = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
+    peak = np.unravel_index(np.argmax(im, axis=None), im.shape)
+    peak = np.clip(peak, 1, im.shape[0] - 2)
     points = np.asarray([-1, 0, 1])
-    x = calc_extreme(points + peak[0], cc[peak[0] - 1:peak[0] + 2, peak[1]])
-    y = calc_extreme(points + peak[1], cc[peak[0], peak[1] - 1:peak[1] + 2])
+    x = calc_extreme(points + peak[0], im[peak[0] - 1:peak[0] + 2, peak[1]])
+    y = calc_extreme(points + peak[1], im[peak[0], peak[1] - 1:peak[1] + 2])
+    return np.asarray((x, y))
 
-    xy = np.asarray(np.shape(im)) * (0.5 + 0.5 * (-0.5 + np.asarray([y, x]) / filter[0]))
-    xy += center
+
+def get_xyza(roi, lut, lut_z_um, width_um=0.4, filter=None):
+    reduced_size = np.shape(filter)[0]
+    fft_im = zoom_fft2(roi['image'], reduced_size, 0.5) * filter
+    cc = np.fft.fftshift(np.abs(np.fft.ifft2(fft_im * fft_im))) / np.product(np.shape(roi['image']))
+    xy = roi['center'] + get_peak_position(cc) - reduced_size // 2
 
     msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
     weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
@@ -122,9 +132,12 @@ def get_xyza(im, lut, lut_z_um, center=[0, 0], width_um=0.4, filter=(50, 5)):
     z = -p[1] / (2 * p[0])
 
     return *xy, z, np.max(cc)
-    # for i in range(5000):
-    #     x = 134411523522254666665414**3
-    # return 1.0, 2.0, 3.0, 4.0
+
+
+def proces_image(index, image, settings):
+    rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
+    result = [get_xyza(roi, settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in rois]
+    return np.append(index, np.reshape(result, (-1)))
 
 
 class Beads():
@@ -141,11 +154,13 @@ class Beads():
             roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
             ims = ims.reshape([-1, roi_size, roi_size])
 
+            self.filter = create_filter(lowpass, highpass)
             z_calib = 1000 * z_calib / self.refraction_index  # to um
-            lut = [np.abs(calc_fft(im, lowpass, highpass)) for im in ims]
+            lut = [np.abs(zoom_fft2(im, lowpass, 0.5)) * self.filter for im in ims]
 
             self._highpass = highpass
             self._lowpass = lowpass
+
             self.z_calib, self.lut = self._resample_lut(z_calib, lut)
             self.roi_size = roi_size
         return
@@ -236,13 +251,9 @@ class Beads():
         xyz = [get_xyza(*get_roi(im, 100, c)) for c in coords]
         return np.reshape(xyz, [-1])
 
-    def get_acquisition_settings(self):
-        settings = {'coords': self.coords, 'size': self.roi_size}
-        return settings
-
-    def get_processing_settings(self):
+    def get_settings(self):
         settings = {'coords': self.coords, 'size': self.roi_size, 'lowpass': self._lowpass, 'highpass': self._highpass,
-                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um}
+                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um, 'filter': self.filter}
         return settings
 
 
