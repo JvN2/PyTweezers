@@ -1,3 +1,4 @@
+from multiprocessing import Process, Manager
 from pathlib import Path
 from time import time
 
@@ -6,11 +7,9 @@ import numpy as np
 import pandas as pd
 from cv2 import imread
 from tqdm import tqdm
-from multiprocessing import Process, Manager
 
 from modules.TweezerImageProcessing import proces_image, Beads, Traces, get_roi, get_xyza
 from modules.TweezersSupport import color_text
-
 
 
 # producer task
@@ -27,10 +26,11 @@ def aquire_images(settings, raw_data, n_frames=100, image=None):
         #     raw_data.put({'frame': info.frame_index, 'rois': rois})
         # cam.stop_acquisition()
     else:
-         for frame_index in tqdm(range(n_frames), postfix='Acquiring images: Simulation using saved image'):
+        for frame_index in tqdm(range(n_frames), postfix='Acquiring images: Simulation using saved image'):
             rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
             raw_data.put({'frame': frame_index, 'rois': rois})
     raw_data.put(None)
+
 
 # consumer task
 def process_rois(settings, raw_data, processed_data, identifier):
@@ -40,12 +40,14 @@ def process_rois(settings, raw_data, processed_data, identifier):
             raw_data.put(None)
             break
 
-        result = [get_xyza(roi, settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in item['rois']]
+        result = [get_xyza(roi, settings['freqs'], settings['lut'], settings['lut_z_um'], filter=settings['filter'])
+                  for roi in item['rois']]
 
         result = np.asarray(np.append([item['frame']], np.reshape(result, (-1))))
         processed_data.put(result)
 
-def test_multi_processing(settings, image, n_images = 10):
+
+def test_multi_processing(settings, image, n_images=10):
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
@@ -65,8 +67,7 @@ def test_multi_processing(settings, image, n_images = 10):
     raw_data = manager.Queue()
     n_images = 100
 
-    consumers = [Process(target=process_rois, args=(settings, raw_data, processed_data, i,)) for
-                 i in range(n_cores)]
+    consumers = [Process(target=process_rois, args=(settings, raw_data, processed_data, i,)) for i in range(n_cores)]
     producer = Process(target=aquire_images, args=(settings, raw_data, n_images, image))
 
     t_start = time()
@@ -78,13 +79,10 @@ def test_multi_processing(settings, image, n_images = 10):
 
     dt = time() - t_start
     print(color_text(0, 100, 0,
-                     f'Acquisition + processing time = {dt:.3f} s for {n_cores} processing threads; {n_images/dt:.1f} frames/s'))
+                     f'Acquisition + processing time = {dt:.3f} s for {n_cores} processing threads; {n_images / dt:.1f} frames/s'))
 
-    try:
-        results = get_queue(processed_data, pars=['frame', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
-        return results
-    except ValueError:
-        return None
+    results = get_queue(processed_data, pars=['frame', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+    return results
 
 
 def convert_result(result, pars=None):
@@ -115,7 +113,7 @@ def test_acquisition(settings, image=None, show=False):
         x = [df.iloc[0][f'{i}: X (pix)'] for i, _ in enumerate(settings['coords'])]
         y = [df.iloc[0][f'{i}: Y (pix)'] for i, _ in enumerate(settings['coords'])]
         plt.imshow(image.T, cmap='Greys_r')
-        plt.scatter(x, y)
+        plt.scatter(x, y, edgecolors='red', facecolors='none')
         plt.show()
 
 

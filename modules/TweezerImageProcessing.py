@@ -6,17 +6,7 @@ import pandas as pd
 from natsort import natsorted
 from nptdms import TdmsFile
 from scipy.optimize import curve_fit
-from scipy.signal import ZoomFFT
 from tqdm.auto import tqdm
-
-
-def zoom_fft2(A, m, fmax):
-    n = A.shape[0]
-    f = ZoomFFT(n, m=m, fn=[-fmax, fmax])
-    FFT = f(A, axis=0)
-    FFT = f(FFT, axis=1)
-    return FFT
-
 
 def create_circular_mask(width, size=None, center=None, steepness=3):
     if size is None:
@@ -105,38 +95,64 @@ def calc_weight(x, x_array, width):
     return weight / np.sum(weight)
 
 
-def get_peak_position(im):
+def calc_freqs(im, zoom=2):
+    freqs = np.arange(len(im) / (2 * zoom))
+    return np.append(np.flip(-np.asarray(freqs + 1)), freqs).astype(int)
+
+
+def zoom_fft2(im, freqs=None):
+    for _ in range(2):
+        im = np.fft.fft(im).T
+        im = np.asarray([im[line] for line in freqs])
+    return im
+
+
+def get_peak(im):
     def calc_extreme(x, y):
         denom = (x[0] - x[1]) * (x[0] - x[2]) * (x[1] - x[2])
         A = (x[2] * (y[1] - y[0]) + x[1] * (y[0] - y[2]) + x[0] * (y[2] - y[1])) / denom
         B = (x[2] * x[2] * (y[0] - y[1]) + x[1] * x[1] * (y[2] - y[0]) + x[0] * x[0] * (y[1] - y[2])) / denom
         return -B / (2 * A)
 
-    peak = np.unravel_index(np.argmax(im, axis=None), im.shape)
-    peak = np.clip(peak, 1, im.shape[0] - 2)
-    points = np.asarray([-1, 0, 1])
-    x = calc_extreme(points + peak[0], im[peak[0] - 1:peak[0] + 2, peak[1]])
-    y = calc_extreme(points + peak[1], im[peak[0], peak[1] - 1:peak[1] + 2])
-    return np.asarray((x, y))
+    shape = im.shape
+    peak = np.unravel_index(np.argmax(im, axis=None), shape)
+    offset = np.asarray([-1, 0, 1])
+    intensity = [0, 0, 0]
+
+    position = peak[0] + offset
+    intensity[0] = im[position[0], peak[1]] if position[0] >= 0 else im[position[0] + shape[0], peak[1]]
+    intensity[1] = im[position[1], peak[1]]
+    intensity[2] = im[position[2], peak[1]] if position[2] < shape[0] else im[position[2] - shape[0], peak[1]]
+    x = calc_extreme(position, intensity)
+
+    position = peak[1] + offset
+    intensity[0] = im[peak[0], position[0]] if position[0] >= 0 else im[peak[0], position[0] + shape[0]]
+    intensity[1] = im[peak[0], position[1]]
+    intensity[2] = im[peak[0], position[2]] if position[2] < shape[1] else im[peak[0], position[2] - shape[1]]
+    y = calc_extreme(position, intensity)
+
+    center = [x, y]
+    center = [c - shape[i] if c > shape[i] / 2 else c for i, c in enumerate(center)]
+    return np.asarray(center)
 
 
-def get_xyza(roi, lut, lut_z_um, width_um=0.4, filter=None):
-    reduced_size = np.shape(filter)[0]
-    fft_im = zoom_fft2(roi['image'], reduced_size, 0.5) * filter
-    cc = np.fft.fftshift(np.abs(np.fft.ifft2(fft_im * fft_im))) / np.product(np.shape(roi['image']))
-    xy = roi['center'] + get_peak_position(cc) - reduced_size // 2
+def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None):
+    fft_im = zoom_fft2(roi['image'], freqs)
+    if filter is not None:
+        fft_im *= filter
+    cc = np.abs(np.fft.ifft2(fft_im ** 2))
+    xy = roi['center'] + get_peak(cc)
 
     msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
     weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
     p = np.polyfit(lut_z_um, msd, 2, w=weight)
     z = -p[1] / (2 * p[0])
-
     return *xy, z, np.max(cc)
 
 
 def proces_image(index, image, settings):
     rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
-    result = [get_xyza(roi, settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in rois]
+    result = [get_xyza(roi, settings['freqs'], settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in rois]
     return np.append(index, np.reshape(result, (-1)))
 
 
@@ -147,16 +163,19 @@ class Beads():
         self._from_file(filename)
         return
 
-    def _from_file(self, filename, highpass=5, lowpass=50):
+    def _from_file(self, filename, highpass=5, zoom=2):
         if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])
             ims = np.fromfile(str(filename).replace('.tdms', 'ROI.bin'), np.uint8)
             roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
             ims = ims.reshape([-1, roi_size, roi_size])
 
+            self.freqs = calc_freqs(ims[0], zoom)
+            lowpass = ims.shape[-1] // zoom
             self.filter = create_filter(lowpass, highpass)
+
             z_calib = 1000 * z_calib / self.refraction_index  # to um
-            lut = [np.abs(zoom_fft2(im, lowpass, 0.5)) * self.filter for im in ims]
+            lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in ims]
 
             self._highpass = highpass
             self._lowpass = lowpass
@@ -253,7 +272,8 @@ class Beads():
 
     def get_settings(self):
         settings = {'coords': self.coords, 'size': self.roi_size, 'lowpass': self._lowpass, 'highpass': self._highpass,
-                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um, 'filter': self.filter}
+                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um, 'filter': self.filter,
+                    'freqs': self.freqs}
         return settings
 
 
