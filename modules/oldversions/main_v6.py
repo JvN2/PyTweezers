@@ -1,6 +1,6 @@
 from multiprocessing import Process, Manager
 from pathlib import Path
-from time import time
+from time import time, sleep
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,6 +10,42 @@ from tqdm import tqdm
 
 from modules.TweezerImageProcessing import proces_image, Beads, Traces, get_roi, get_xyza
 from modules.TweezersSupport import color_text
+
+class AttrDict(dict):
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+class IMAQ_dummy():
+    def __init__(self, image, framerate=25):
+        self.framerate = framerate
+        self.image = image
+        self.frame_info = AttrDict()
+        return
+
+    def setup_acquisition(self, nframes, mode=None):
+        self.nframes = nframes
+        return
+
+    def start_acquisition(self):
+        self.start = time()
+        self.last_frame = -1
+        return
+
+    def wait_for_frame(self):
+        current_frame = int((time() - self.start) * self.framerate)
+        while current_frame < self.last_frame:
+            sleep(0.05)
+            current_frame = int((time() - self.start) * self.framerate)
+        self.last_frame += 1
+        return
+
+    def read_oldest_image(self, return_info=True):
+        self.frame_info.update({'frame_index': self.last_frame})
+        return im, self.frame_info
+
+    def stop_acquisition(self):
+        return
 
 
 # producer task
@@ -119,6 +155,7 @@ def test_acquisition(settings, image=None, show=False):
 
 if __name__ == '__main__':
     print()
+
     # set up lookup table
     ref_filename = Path(r'data\data_024.tdms')
     tracker = Beads(ref_filename)
@@ -137,7 +174,15 @@ if __name__ == '__main__':
         data.to_file()
         # im = None
 
-    # print(data.pars.tail(3))
+    cam = IMAQ_dummy(im)
+    cam.start_acquisition()
+    for i in range(100):
+        cam.wait_for_frame()
+        im, info = cam.read_oldest_image()
+        print(info.frame_index)
+    breakpoint()
+
+    print(data.pars.tail(3))
 
     # acquire and process images
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
