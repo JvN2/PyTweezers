@@ -34,11 +34,11 @@ class IMAQ_dummy():
         return
 
     def wait_for_frame(self):
-        current_frame = int((time() - self.start) * self.framerate)
-        while current_frame < self.last_frame:
-            sleep(0.05)
+        while True:
+            sleep(0.01)
             current_frame = int((time() - self.start) * self.framerate)
-        # self.last_frame += 1
+            if current_frame > self.last_frame:
+                break
         self.last_frame = current_frame
         return
 
@@ -95,7 +95,7 @@ def grab_and_process(cam, settings, queue, i):
 
 def test_multi_processing(settings, image, show=False):
     # Start combined acquisition and processing
-    n_cores = 1
+    n_cores = 27
     manager = Manager()
     queue = manager.Queue()
     n_images = 1000
@@ -135,12 +135,12 @@ if __name__ == '__main__':
     tracker = Beads(ref_filename)
 
     # init bead coordinates
-    from_file = False
+    from_image = False
     filename = Path(r'data\data_024.jpg')
     data = Traces(filename)
     im = imread(str(filename))[:, :, 0]
 
-    if from_file:
+    if from_image:
         data.pars = tracker.find_beads(im, 200, 0.6, show=True)
         data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
         data.to_file()
@@ -151,3 +151,7 @@ if __name__ == '__main__':
     df = test_multi_processing(tracker.get_settings(), im, show=False)
 
     print(df)
+
+    plt.plot(np.diff(df.index))
+    # plt.plot(df['thread'])
+    plt.show()
