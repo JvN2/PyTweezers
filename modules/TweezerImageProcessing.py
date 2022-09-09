@@ -223,8 +223,8 @@ class Beads():
             max_index = np.unravel_index(np.argmax(cc, axis=None), cc.shape)
             arrays = []
             for roi in [X, Y, cc]:
-                roi, center = get_roi(roi, self.roi_size, max_index)
-                arrays.append(roi)
+                roi = get_roi(roi, self.roi_size, max_index)
+                arrays.append(roi['image'])
             try:
                 fit, pars = fit_peak(*arrays)
                 if pars[3] < 0.01:
@@ -232,13 +232,13 @@ class Beads():
                 coords_list.append(pars)
             except (RuntimeError, ValueError) as e:
                 pass
-            cc = set_roi(cc, center, 0 * fit)
+            cc = set_roi(cc, roi['center'], 0 * fit)
 
         coords = pd.DataFrame(coords_list, columns=['X0 (pix)', 'Y0 (pix)', 'width (pix)', 'amplitude (a.u.)', 'R2'])
         coords.sort_values('Y0 (pix)', inplace=True, ignore_index=True)
 
         if show:
-            # print(coords.head(30))
+            print(coords.tail(5))
             fig = plt.figure(figsize=(12, 12))
             plt.imshow(im, origin='lower', vmax=np.percentile(im, 99.9), cmap='Greys_r')
             roi_size = 100
