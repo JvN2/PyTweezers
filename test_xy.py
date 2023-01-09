@@ -69,5 +69,5 @@ plt.title(f'center = {position[0]:.2f}, {position[1]:.2f}')
 plt.show()
 
 # plt.imshow(np.abs(create_filter(50, 5)), cmap = 'Greys_r')
-# plt.imshow(np.abs(fft_im), cmap = 'Greys_r')
-# plt.show()
+plt.imshow(np.abs(fft_im), cmap = 'Greys_r')
+plt.show()

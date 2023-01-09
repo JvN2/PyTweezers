@@ -95,10 +95,10 @@ def grab_and_process(cam, settings, queue, i):
 
 def test_multi_processing(settings, image, show=False):
     # Start combined acquisition and processing
-    n_cores = 27
+    n_cores = 1
     manager = Manager()
     queue = manager.Queue()
-    n_images = 1000
+    n_images = 100
 
     cam = framegrabber_init(n_images, image)
 
@@ -148,7 +148,7 @@ if __name__ == '__main__':
     coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
     tracker.set_roi_coords(coords)
 
-    df = test_multi_processing(tracker.get_settings(), im, show=False)
+    df = test_multi_processing(tracker.get_settings(), im, show=True)
 
     print(df)
 
