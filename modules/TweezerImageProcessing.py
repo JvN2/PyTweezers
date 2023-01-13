@@ -8,6 +8,7 @@ from nptdms import TdmsFile
 from scipy.optimize import curve_fit
 from tqdm.auto import tqdm
 
+
 def create_circular_mask(width, size=None, center=None, steepness=3):
     if size is None:
         size = [width, width]
@@ -136,7 +137,7 @@ def get_peak(im):
     return np.asarray(center)
 
 
-def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None):
+def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None, show=False):
     fft_im = zoom_fft2(roi['image'], freqs)
     if filter is not None:
         fft_im *= filter
@@ -144,15 +145,28 @@ def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None):
     xy = roi['center'] + get_peak(cc)
 
     msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
+    msd /=np.max(msd)
     weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
+
     p = np.polyfit(lut_z_um, msd, 2, w=weight)
+
+    if show:
+        plt.scatter(lut_z_um, msd)
+        lut_z_um = np.linspace(np.min(lut_z_um), np.max(lut_z_um), 1000)
+        plt.plot(lut_z_um, np.polyval(p, lut_z_um), color = 'k')
+        plt.ylim([np.min(msd), 1 + 0.5*(1- np.min(msd))])
+        plt.xlabel('z in (um)')
+        plt.ylabel('msd (a.u)')
+        plt.show()
+
     z = -p[1] / (2 * p[0])
     return *xy, z, np.max(cc)
 
 
 def proces_image(index, image, settings):
     rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
-    result = [get_xyza(roi, settings['freqs'], settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi in rois]
+    result = [get_xyza(roi, settings['freqs'], settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi
+              in rois]
     return np.append(index, np.reshape(result, (-1)))
 
 
@@ -175,6 +189,7 @@ class Beads():
             self.filter = create_filter(lowpass, highpass)
 
             z_calib = 1000 * z_calib / self.refraction_index  # to um
+            z_calib -= np.min(z_calib)
             lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in ims]
 
             self._highpass = highpass
