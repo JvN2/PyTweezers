@@ -21,8 +21,12 @@ def create_circular_mask(width, size=None, center=None, steepness=3):
     return 1 - 1 / (1 + np.exp(-(r - width / 2) * steepness))
 
 
-def create_ref_image(period=10, width=100, size=100):
-    x, y = np.asarray(np.meshgrid(np.arange(size), np.arange(size))) - size / 2
+def create_ref_image(period=10, width=100, shape=[100,100]):
+    print(*shape)
+    x, y = np.asarray(np.meshgrid(*shape)) - np.asarray(shape) / 2
+
+    print(x.shape, y.shape)
+    breakpoint()
     r = (x ** 2 + y ** 2) ** 0.5 + 1
     im = 0.5 * (np.cos(2 * np.pi * r / width) + 1)
     im[r >= width / 2] = 0
@@ -179,24 +183,34 @@ class Beads():
 
     def _from_file(self, filename, highpass=5, zoom=2):
         if '.tdms' in filename.suffix:
-            z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])
-            ims = np.fromfile(str(filename).replace('.tdms', 'ROI.bin'), np.uint8)
-            roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int8)
-            ims = ims.reshape([-1, roi_size, roi_size])
+            z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])*1000
+            self.bin_file = str(filename).replace(r'.tdms', r'ROI.bin')
+        elif '.xlsx' in filename.suffix:
+            df = pd.read_excel(filename)
+            z_calib = df['Piezo Position (um)'].values
+            self.bin_file = next(filename.parent.glob('*.bin'))
+        else:
+            raise ValueError('File type not supported')
+            return
 
-            self.freqs = calc_freqs(ims[0], zoom)
-            lowpass = ims.shape[-1] // zoom
-            self.filter = create_filter(lowpass, highpass)
+        ims = np.fromfile(self.bin_file, np.uint8)
 
-            z_calib = 1000 * z_calib / self.refraction_index  # to um
-            z_calib -= np.min(z_calib)
-            lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in ims]
+        roi_size = np.sqrt(len(ims) / len(z_calib)).astype(np.int32)
+        ims = ims.reshape([-1, roi_size, roi_size])
 
-            self._highpass = highpass
-            self._lowpass = lowpass
+        self.freqs = calc_freqs(ims[0], zoom)
+        lowpass = ims.shape[-1] // zoom
+        self.filter = create_filter(lowpass, highpass)
 
-            self.z_calib, self.lut = self._resample_lut(z_calib, lut)
-            self.roi_size = roi_size
+        z_calib /= self.refraction_index  # to um
+        z_calib -= np.min(z_calib)
+        lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in ims]
+
+        self._highpass = highpass
+        self._lowpass = lowpass
+
+        self.z_calib, self.lut = self._resample_lut(z_calib, lut)
+        self.roi_size = roi_size
         return
 
     def _resample_lut(self, z_calib, lut, step=0.3):
@@ -226,7 +240,7 @@ class Beads():
 
         cc = np.ones_like(reduced_im)
         for period in tqdm([6.5, 8.7, 10.3, 12.7], postfix='Cross correlating with ref images'):
-            ref_im = create_ref_image(period, size=len(reduced_im))
+            ref_im = create_ref_image(period, shape=reduced_im.shape)
             cc *= np.abs(np.fft.ifft2(np.fft.fft2(reduced_im) * np.conjugate(np.fft.fft2(ref_im))))
         cc = np.abs(np.fft.fftshift(cc))
         cc /= np.percentile(cc, 99.999)

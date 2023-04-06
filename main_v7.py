@@ -132,10 +132,12 @@ def test_multi_processing(settings, image, show=False):
 if __name__ == '__main__':
     # set up lookup table
     ref_filename = Path(r'data\data_024.tdms')
+
     tracker = Beads(ref_filename)
 
+    breakpoint()
     # init bead coordinates
-    from_image = False
+    from_image = True
     filename = Path(r'data\data_024.jpg')
     data = Traces(filename)
     im = imread(str(filename))[:, :, 0]

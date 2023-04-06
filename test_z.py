@@ -24,7 +24,7 @@ if __name__ == '__main__':
 
     z = []
     for i, im in enumerate(ims):
-        show = i == len(ims)//2
+        show = i == len(ims)//3
         res = get_xyza(get_roi(im, roi_size), tracker.freqs, tracker.lut, tracker.z_calib, width_um=0.4, filter=None, show = show)
         z.append(res[2])
     z = np.asarray(z)

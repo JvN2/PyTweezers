@@ -49,8 +49,9 @@ def get_peak(im):
 shift = [10, -15]
 size = 100
 image = np.random.normal(size=(size, size))
+print('Shape = ' , image.shape)
 for p in (7, 9, 8.5):
-    image += 2 * create_ref_image(period=p, size=size, width=size)
+    image += 2 * create_ref_image(period=p, shape=image.shape, width=size)
 image = np.roll(image, shift, axis=[0, 1])
 
 repeats = 2000
