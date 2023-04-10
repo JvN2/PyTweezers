@@ -4,6 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from cv2 import imread
+import cv2
 from nptdms import TdmsFile
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,6 +22,9 @@ def display_movie(movie):
     ani = animation.FuncAnimation(plt.gcf(), update, frames=movie.shape[0], interval=50)
     plt.show()
 
+
+def read_avi_to_array(filename):
+    return np.stack([cv2.cvtColor(cv2.VideoCapture(filename).read()[1], cv2.COLOR_BGR2GRAY).astype(np.uint8) for i in range(int(cv2.VideoCapture(filename).get(7)))])
 
 def create_LUT_from_tifs(ref_file, size=128, coords=None):
     if '.xlsx' in str(ref_file):
@@ -95,30 +99,37 @@ if __name__ == '__main__':
     filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\Piezo position_Frames.xlsx')
 
     tracker = Beads(filename)
-    # test_z(filename, tracker)
+    if False:
+       test_z(filename, tracker)
+
 
     # init bead coordinates
-    from_image = True
-    filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\LUT_Frames\214-1.tif')
-    data = Traces(filename)
-    im = plt.imread(filename)
+    if False:
+        from_image = True
+        filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\LUT_Frames\214-1.tif')
+        data = Traces(filename)
+        im = plt.imread(filename)
+        data.pars = tracker.find_beads(im, 200, 0.5)
 
-    if from_image:
-        data.pars = tracker.find_beads(im, 200, 0.6, show=True)
         data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
+        data.to_file(filename)
+
+    if True:
+        filename =  Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\FEC AVIs_10Frames\1.avi')
+        movie = read_avi_to_array(str(filename))
+        data = Traces(filename)
+        data.pars = tracker.find_beads(movie[0], 200, 0.5, show=True)
         data.to_file()
 
-    breakpoint()
-
-    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
-    tracker.set_roi_coords(coords)
-
-    df = test_multi_processing(tracker.get_settings(), im, show=True)
-
-    print(df)
-
-    plt.plot(np.diff(df.index))
-    # plt.plot(df['thread'])
-    plt.show()
-
+    # coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
+    # tracker.set_roi_coords(coords)
+    #
+    # df = test_multi_processing(tracker.get_settings(), im, show=True)
+    #
+    # print(df)
+    #
+    # plt.plot(np.diff(df.index))
+    # # plt.plot(df['thread'])
+    # plt.show()
+    #
 

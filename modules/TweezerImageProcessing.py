@@ -9,31 +9,31 @@ from scipy.optimize import curve_fit
 from tqdm.auto import tqdm
 
 
-def create_circular_mask(width, size=None, center=None, steepness=3):
-    if size is None:
-        size = [width, width]
+def create_circular_mask(width, shape=None, center=None, steepness=3, invert = False):
+    if shape is None:
+        shape = [width, width]
     if center is None:
-        center = np.asarray(size) / 2
+        center = np.asarray(shape) / 2
 
-    x = np.outer(np.linspace(0, size[0] - 1, size[0]), np.ones(size[1]))
-    y = np.outer(np.ones(size[0]), np.linspace(0, size[1] - 1, size[1]))
+    x = np.outer(np.linspace(0, shape[0] - 1, shape[0]), np.ones(shape[1]))
+    y = np.outer(np.ones(shape[0]), np.linspace(0, shape[1] - 1, shape[1]))
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
-    return 1 - 1 / (1 + np.exp(-(r - width / 2) * steepness))
+    mask = 1 - 1 / (1 + np.exp(-(r - width / 2) * steepness))
+    if invert:
+        mask = 1-mask
+    return mask
 
 
 def create_ref_image(period=10, width=100, shape=[100,100]):
-    print(*shape)
-    x, y = np.asarray(np.meshgrid(*shape)) - np.asarray(shape) / 2
-
-    print(x.shape, y.shape)
-    breakpoint()
-    r = (x ** 2 + y ** 2) ** 0.5 + 1
-    im = 0.5 * (np.cos(2 * np.pi * r / width) + 1)
+    x, y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
+    r = np.sqrt((x - shape[1] / 2) ** 2 + (y - shape[0] / 2) ** 2)
+    im = np.cos(2 * np.pi * r / period)
+    im *=  np.cos(2 * np.pi * r /(2*width))
     im[r >= width / 2] = 0
-    return im * np.cos(2 * np.pi * r / period)
+    return im * np.cos(2 * np.pi * r / period).astype(float)
 
 
-def fit_peak(X, Y, Z, show=False):
+def fit_peak(X, Y, Z):
     # Our function to fit is a two-dimensional Gaussian
     def gaussian(x, y, x0, y0, sigma, A):
         return A * np.exp(-((x - x0) / sigma) ** 2 - ((y - y0) / sigma) ** 2)
@@ -219,33 +219,19 @@ class Beads():
         return z_array, new_lut
 
     def find_beads(self, im, n_max=100, treshold=None, show=False):
-        def bin_2d(a, K):
-            assert a.shape[0] % K == 0
-            assert a.shape[1] % K == 0
-            m_bins = a.shape[0] // K
-            n_bins = a.shape[1] // K
-            res = np.zeros((m_bins, n_bins), dtype=a.dtype)
-            for i in range(res.shape[0]):
-                for ii in range(i * K, (i + 1) * K):
-                    for j in range(res.shape[1]):
-                        TMP = res[i, j]
-                        for jj in range(j * K, (j + 1) * K):
-                            TMP += a[ii, jj]
-                        res[i, j] = TMP
-            return res
-
-        reduction = 2  # scale down image by factor 2
-        reduced_im = bin_2d(im.astype(float), reduction)
-        reduced_im -= np.median(reduced_im)
-
-        cc = np.ones_like(reduced_im)
-        for period in tqdm([6.5, 8.7, 10.3, 12.7], postfix='Cross correlating with ref images'):
-            ref_im = create_ref_image(period, shape=reduced_im.shape)
-            cc *= np.abs(np.fft.ifft2(np.fft.fft2(reduced_im) * np.conjugate(np.fft.fft2(ref_im))))
+        mask =  np.fft.fftshift(create_circular_mask(20, im.shape, invert=True))
+        cc = np.ones_like(im).astype(float)
+        for period in tqdm([38.4, 29.3, 47.5, 52.0], postfix='Cross correlating with ref images'):
+            ref_im = create_ref_image(period, shape=im.shape, width=period*10)
+            cc *= np.abs(np.fft.ifft2(mask*np.fft.fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
         cc = np.abs(np.fft.fftshift(cc))
-        cc /= np.percentile(cc, 99.999)
+        cc /= np.percentile(cc, 99.9)
 
-        X, Y = np.meshgrid(reduction * np.arange(len(cc)), reduction * np.arange(len(cc)))
+        if False:
+            plt.imshow(cc, cmap = 'Greys_r', vmax=2.0, vmin = 0,  origin='lower')
+            plt.show()
+
+        X, Y = np.meshgrid(np.arange(len(cc[0])), np.arange(len(cc)))
 
         coords_list = []
         for _ in tqdm(range(n_max), postfix='find_beads: Finding peaks in cross-corelation'):
@@ -256,7 +242,7 @@ class Beads():
                 arrays.append(roi['image'])
             try:
                 fit, pars = fit_peak(*arrays)
-                if pars[3] < 0.01:
+                if pars[3] < 0.4:
                     break
                 coords_list.append(pars)
             except (RuntimeError, ValueError) as e:
@@ -356,6 +342,7 @@ class Traces():
                 self.pars.to_excel(writer, sheet_name='parameters')
             if not self.globs.empty:
                 self.globs.to_excel(writer, sheet_name='globals')
+        print(f'Data saved to {self.filename}')
         return
 
     def sort_traces(self):
