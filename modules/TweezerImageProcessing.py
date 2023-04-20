@@ -9,7 +9,7 @@ from scipy.optimize import curve_fit
 from tqdm.auto import tqdm
 
 
-def create_circular_mask(width, shape=None, center=None, steepness=3, invert = False):
+def create_circular_mask(width, shape=None, center=None, steepness=3, invert=False):
     if shape is None:
         shape = [width, width]
     if center is None:
@@ -20,15 +20,15 @@ def create_circular_mask(width, shape=None, center=None, steepness=3, invert = F
     r = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2)
     mask = 1 - 1 / (1 + np.exp(-(r - width / 2) * steepness))
     if invert:
-        mask = 1-mask
+        mask = 1 - mask
     return mask
 
 
-def create_ref_image(period=10, width=100, shape=[100,100]):
+def create_ref_image(period=10, width=100, shape=[100, 100]):
     x, y = np.meshgrid(np.arange(shape[1]), np.arange(shape[0]))
     r = np.sqrt((x - shape[1] / 2) ** 2 + (y - shape[0] / 2) ** 2)
     im = np.cos(2 * np.pi * r / period)
-    im *=  np.cos(2 * np.pi * r /(2*width))
+    im *= np.cos(2 * np.pi * r / (2 * width))
     im[r >= width / 2] = 0
     return im * np.cos(2 * np.pi * r / period).astype(float)
 
@@ -149,7 +149,7 @@ def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None, show=False):
     xy = roi['center'] + get_peak(cc)
 
     msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
-    msd /=np.max(msd)
+    msd /= np.max(msd)
     weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
 
     p = np.polyfit(lut_z_um, msd, 2, w=weight)
@@ -157,8 +157,8 @@ def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None, show=False):
     if show:
         plt.scatter(lut_z_um, msd)
         lut_z_um = np.linspace(np.min(lut_z_um), np.max(lut_z_um), 1000)
-        plt.plot(lut_z_um, np.polyval(p, lut_z_um), color = 'k')
-        plt.ylim([np.min(msd), 1 + 0.5*(1- np.min(msd))])
+        plt.plot(lut_z_um, np.polyval(p, lut_z_um), color='k')
+        plt.ylim([np.min(msd), 1 + 0.5 * (1 - np.min(msd))])
         plt.xlabel('z in (um)')
         plt.ylabel('msd (a.u)')
         plt.show()
@@ -175,15 +175,16 @@ def proces_image(index, image, settings):
 
 
 class Beads():
-    def __init__(self, filename=None, pix_um=0.225, n=1.33):
+    def __init__(self, filename=None, pix_um=0.225, n=1.33, roi_size=128):
         self.refraction_index = n
         self.pix_um = pix_um
-        self._from_file(filename)
+        self._create_lut(filename)
+        self.roi_size = roi_size
         return
 
-    def _from_file(self, filename, highpass=5, zoom=2):
+    def _create_lut(self, filename, highpass=5, zoom=2):
         if '.tdms' in filename.suffix:
-            z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)'])*1000
+            z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)']) * 1000
             self.bin_file = str(filename).replace(r'.tdms', r'ROI.bin')
         elif '.xlsx' in filename.suffix:
             df = pd.read_excel(filename)
@@ -218,17 +219,38 @@ class Beads():
         new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, step), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
+    def pick_beads(self, image):
+        plt.title('Press <Enter> to finish')
+        plt.imshow(image, cmap='Greys_r', origin='lower',)
+        color = 'blue'
+        coords_list = []
+        while True:
+            c = plt.ginput(show_clicks=True, timeout=-1)
+            try:
+                c = np.asarray(c).astype(np.int32)[0]
+                box = plt.Rectangle([c[0] - self.roi_size / 2, c[1] - self.roi_size / 2], self.roi_size, self.roi_size, edgecolor=color,
+                                    facecolor='none')
+                plt.gca().add_artist(box)
+                plt.text(c[0] - self.roi_size / 2, c[1] + self.roi_size / 1.9, f'{len(coords_list)}', color=color)
+                plt.draw()
+                coords_list.append(c)
+            except IndexError:
+                break
+        self.coords = np.asarray(coords_list).astype(int)
+        return
+
     def find_beads(self, im, n_max=100, treshold=None, show=False):
-        mask =  np.fft.fftshift(create_circular_mask(20, im.shape, invert=True))
+        mask = np.fft.fftshift(create_circular_mask(20, im.shape, invert=True))
         cc = np.ones_like(im).astype(float)
         for period in tqdm([38.4, 29.3, 47.5, 52.0], postfix='Cross correlating with ref images'):
-            ref_im = create_ref_image(period, shape=im.shape, width=period*10)
-            cc *= np.abs(np.fft.ifft2(mask*np.fft.fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
+            ref_im = create_ref_image(period, shape=im.shape, width=period * 10)
+            cc *= np.abs(np.fft.ifft2(mask * np.fft
+                                      .fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
         cc = np.abs(np.fft.fftshift(cc))
         cc /= np.percentile(cc, 99.9)
 
         if False:
-            plt.imshow(cc, cmap = 'Greys_r', vmax=2.0, vmin = 0,  origin='lower')
+            plt.imshow(cc, cmap='Greys_r', vmax=2.0, vmin=0, origin='lower')
             plt.show()
 
         X, Y = np.meshgrid(np.arange(len(cc[0])), np.arange(len(cc)))
@@ -281,7 +303,9 @@ class Beads():
         return get_xyza(*get_roi(im, 100, *xy))
         # return np.append(xy, [3])
 
-    def process_image(self, im, coords):
+    def process_image(self, im, coords=None):
+        if coords is None:
+            coords = self.coords
         xyz = [get_xyza(*get_roi(im, 100, c)) for c in coords]
         return np.reshape(xyz, [-1])
 

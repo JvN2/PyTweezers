@@ -13,6 +13,7 @@ from tqdm import tqdm
 import pandas as pd
 
 
+
 def display_movie(movie):
     def update(frame):
         plt.clf()  # Clear the current figure
@@ -22,6 +23,16 @@ def display_movie(movie):
     ani = animation.FuncAnimation(plt.gcf(), update, frames=movie.shape[0], interval=50)
     plt.show()
 
+def animate_3darray(array):
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.set_axis_off()
+    im = ax.imshow(array[0], cmap='Greys_r')
+    def update(i):
+        im.set_data(array[i])
+        return im,
+    ani = animation.FuncAnimation(fig, update, frames=array.shape[0], interval=50)
+    plt.show()
 
 def read_avi_to_array(filename):
     return np.stack([cv2.cvtColor(cv2.VideoCapture(filename).read()[1], cv2.COLOR_BGR2GRAY).astype(np.uint8) for i in range(int(cv2.VideoCapture(filename).get(7)))])
@@ -99,12 +110,10 @@ if __name__ == '__main__':
     filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\Piezo position_Frames.xlsx')
 
     tracker = Beads(filename)
-    if False:
+    if False: # Test z calibration
        test_z(filename, tracker)
 
-
-    # init bead coordinates
-    if False:
+    if False: # Create LUT
         from_image = True
         filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\LUT_Frames\214-1.tif')
         data = Traces(filename)
@@ -117,9 +126,16 @@ if __name__ == '__main__':
     if True:
         filename =  Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\FEC AVIs_10Frames\1.avi')
         movie = read_avi_to_array(str(filename))
-        data = Traces(filename)
-        data.pars = tracker.find_beads(movie[0], 200, 0.5, show=True)
-        data.to_file()
+        tracker.pick_beads(movie[0])
+
+        print(tracker.process_image(movie[0]))
+
+        # display_movie(movie)
+        # animate_3darray(movie)
+
+        # data = Traces(filename)
+        # data.pars = tracker.find_beads(movie[0], 200, 0.5, show=True)
+        # data.to_file()
 
     # coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
     # tracker.set_roi_coords(coords)
