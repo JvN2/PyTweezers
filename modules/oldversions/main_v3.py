@@ -143,10 +143,10 @@ if __name__ == '__main__':
 
     if False:
         # plot positions
-        selected_cols = [col for col in data.traces.columns if 'X (pix)' in col]
-        x = data.traces[selected_cols].iloc[0].values
-        selected_cols = [col for col in data.traces.columns if 'Y (pix)' in col]
-        y = data.traces[selected_cols].iloc[0].values
+        selected_cols = [col for col in data.data.columns if 'X (pix)' in col]
+        x = data.data[selected_cols].iloc[0].values
+        selected_cols = [col for col in data.data.columns if 'Y (pix)' in col]
+        y = data.data[selected_cols].iloc[0].values
         plt.imshow(im, cmap='Greys_r', origin='lower')
         plt.scatter(y - 50, x - 50, s=80, facecolors='none', edgecolors='r')
         # xy coords are not correct: to be solved

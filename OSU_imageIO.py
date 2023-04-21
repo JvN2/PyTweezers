@@ -5,37 +5,87 @@ import matplotlib.pyplot as plt
 import numpy as np
 from cv2 import imread
 import cv2
+from natsort import natsorted
 from nptdms import TdmsFile
 import numpy as np
+
+import matplotlib
+
+matplotlib.use("TkAgg")
+
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from tqdm import tqdm
 import pandas as pd
 
 
-
 def display_movie(movie):
     def update(frame):
         plt.clf()  # Clear the current figure
-        plt.imshow(movie[frame], cmap='Greys_r')  # Display the current frame
-        plt.axis('off')  # Hide the axis labels
+        plt.imshow(movie[frame], cmap='Greys_r', origin='lower')  # Display the current frame
+        # plt.axis('off')  # Hide the axis labels
+        plt.title(f'Frame {frame}')  # Add a title to the axes
 
     ani = animation.FuncAnimation(plt.gcf(), update, frames=movie.shape[0], interval=50)
     plt.show()
 
-def animate_3darray(array):
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax.set_axis_off()
-    im = ax.imshow(array[0], cmap='Greys_r')
-    def update(i):
-        im.set_data(array[i])
-        return im,
-    ani = animation.FuncAnimation(fig, update, frames=array.shape[0], interval=50)
-    plt.show()
 
-def read_avi_to_array(filename):
-    return np.stack([cv2.cvtColor(cv2.VideoCapture(filename).read()[1], cv2.COLOR_BGR2GRAY).astype(np.uint8) for i in range(int(cv2.VideoCapture(filename).get(7)))])
+def save__avi(array, filename, fps=15):
+    fourcc = cv2.VideoWriter_fourcc(*'DIVX')
+    out = cv2.VideoWriter(str(filename), fourcc, fps, array[0].T.shape, isColor=False)
+    for frame in tqdm(array, desc='Saving avi file'):
+        out.write(frame)
+    out.release()
+    print(f'Video saved to {filename}')
+
+
+def find_files_with_wildcard(filename):
+    if '*' in str(filename):
+        path = Path(str(filename).split('*')[0])
+        extension = str(filename).split('.')[-1]
+        files = natsorted(path.glob('*'), key=lambda x: x.stem)
+        matching_files = [file for file in files if str(file).split('.')[-1] == extension]
+        return matching_files
+    else:
+        return [str(filename)]
+
+
+def read_avi(filename, frames=np.inf):
+    filenames = find_files_with_wildcard(filename)
+    movie = []
+    for filename in tqdm(filenames, desc='Reading avi files'):
+        vidcap = cv2.VideoCapture(str(filename))
+        num_frames = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+        for i in range(num_frames):
+            ret, frame = vidcap.read()
+            if not ret:
+                break
+            movie.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+            if len(movie) >= frames:
+                break
+        if len(movie) >= frames:
+            break
+        vidcap.release()
+    return np.asarray(movie)
+
+
+def read_tifs(filename, frames=np.inf):
+    files = find_files_with_wildcard(filename)
+    movie = []
+    for file in tqdm(files, desc='Reading tifs'):
+        movie.append(plt.imread(file).astype(np.uint8))
+        if len(movie) >= frames:
+            break
+    return np.asarray(movie)
+
+
+def movie_to_lut(movie, coords, size=128):
+    lut = []
+    for frame in tqdm(movie, desc='Creating LUT'):
+        roi = get_roi(frame, size, coords)
+        lut.append(roi['image'])
+    return np.asarray(lut).astype(np.uint8)
+
 
 def create_LUT_from_tifs(ref_file, size=128, coords=None):
     if '.xlsx' in str(ref_file):
@@ -73,15 +123,17 @@ def create_LUT_from_tifs(ref_file, size=128, coords=None):
         lut.tofile(f)
     return lutfile
 
+
 def test_z(filename, tracker):
-    df = pd.read_excel(filename)
+    df = pd.read_excel(filename.with_name('piezo.xlsx'))
     z_calib = df['Piezo Position (um)'].values
 
     z_calib -= np.min(z_calib)
-    ims = np.fromfile(tracker.bin_file, np.uint8)
+    ims = read_avi(filename.with_name('lut.avi'))
+    # ims = np.fromfile(tracker.bin_file, np.uint8)
     roi_size = np.sqrt(np.size(ims) / np.size(z_calib)).astype(np.int32)
-    ims = ims.reshape([-1, roi_size, roi_size])
-    coords = [[roi_size / 2, roi_size / 2]]
+    # ims = ims.reshape([-1, roi_size, roi_size])
+    # coords = [[roi_size / 2, roi_size / 2]]
 
     z = []
     for i, im in enumerate(ims):
@@ -107,13 +159,27 @@ def test_z(filename, tracker):
 
 if __name__ == '__main__':
     # filename = Path(r'data\data_024.tdms')
-    filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\Piezo position_Frames.xlsx')
+    lut_filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230408\LUT Tiffs - 10-40 um\piezo.xlsx')
 
-    tracker = Beads(filename)
-    if False: # Test z calibration
-       test_z(filename, tracker)
+    filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230408\LUT Tiffs - 10-40 um\*.tif')
+    tracker = Beads(lut_filename)
 
-    if False: # Create LUT
+    if False:
+        filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230408\LUT Tiffs - 10-40 um\*.tif')
+        # movie = read_tifs_to_array(filename)
+        # save_array_to_avi(movie, filename.with_name('all_frames.avi'))
+        movie = read_avi_to_array(str(filename.with_name('all_frames.avi')))
+
+        data = Beads(roi_size=128)
+        coords = data.pick_beads(movie[0])[0]
+        lut = movie_to_lut(movie, coords, data.roi_size)
+        save_array_to_avi(lut, filename.with_name('lut.avi'))
+
+
+    if False:  # Test z calibration
+        test_z(lut_filename, tracker)
+
+    if False:  # Create LUT
         from_image = True
         filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\LUT_Frames\214-1.tif')
         data = Traces(filename)
@@ -123,12 +189,33 @@ if __name__ == '__main__':
         data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
         data.to_file(filename)
 
-    if True:
-        filename =  Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\FEC AVIs_10Frames\1.avi')
-        movie = read_avi_to_array(str(filename))
-        tracker.pick_beads(movie[0])
+    if False:  # pick coords
+        filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230314\FEC AVIs_10Frames\1.avi')
+        movie = read_avi_to_array(str(filename), 2)
+        coords = tracker.pick_beads(movie[0])
 
-        print(tracker.process_image(movie[0]))
+    if True:  # Test tracking
+        filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230408\4-8-23_FEC Trial_Selected AVIs - 1-14.5 mm\*.avi')
+        df = pd.read_excel(str(filename.with_name('MagnetShift.xlsx')))
+        movie = tracker.read_avi(filename)
+        display_movie(movie)
+        save_array_to_avi(movie, str(filename).replace(r'*', r'all_frames'))
+        breakpoint()
+
+        if not hasattr(locals(), 'coords'):
+            coords = [[409, 617], [755, 550], [246, 477]]
+
+        data = Traces()
+        data.traces['time (s)'] = df['Time (msec)']
+        data.traces['shift (mm)'] = df['Piezo Position (um)']
+
+        breakpoint()
+
+        for i in tqdm(range(len(movie)), desc='Tracking'):
+            beads = tracker.process_image(movie[i], coords)
+            data.add_frame_coords(i, beads)
+
+        data.to_file(str(filename).replace(r'*', r'data'))
 
         # display_movie(movie)
         # animate_3darray(movie)
@@ -148,4 +235,3 @@ if __name__ == '__main__':
     # # plt.plot(df['thread'])
     # plt.show()
     #
-

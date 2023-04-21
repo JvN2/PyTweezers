@@ -1,5 +1,4 @@
 from pathlib import Path
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,6 +6,7 @@ from natsort import natsorted
 from nptdms import TdmsFile
 from scipy.optimize import curve_fit
 from tqdm.auto import tqdm
+import cv2
 
 
 def create_circular_mask(width, shape=None, center=None, steepness=3, invert=False):
@@ -178,26 +178,55 @@ class Beads():
     def __init__(self, filename=None, pix_um=0.225, n=1.33, roi_size=128):
         self.refraction_index = n
         self.pix_um = pix_um
-        self._create_lut(filename)
         self.roi_size = roi_size
+        if filename is not None:
+            self._create_lut(filename)
         return
 
+    def find_files_with_wildcard(self, filename):
+        if '*' in str(filename):
+            path = Path(str(filename).split('*')[0])
+            extension = str(filename).split('.')[-1]
+            files = natsorted(path.glob('*'), key=lambda x: x.stem)
+            matching_files = [file for file in files if str(file).split('.')[-1] == extension]
+            return matching_files
+        else:
+            return [str(filename)]
+
+    def read_avi(self, filename, frames=np.inf):
+        filenames = self.find_files_with_wildcard(filename)
+        movie = []
+        for filename in tqdm(filenames, desc='Reading avi files'):
+            vidcap = cv2.VideoCapture(str(filename))
+            num_frames = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
+            for i in range(num_frames):
+                ret, frame = vidcap.read()
+                if not ret:
+                    break
+                movie.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
+                if len(movie) >= frames:
+                    break
+            if len(movie) >= frames:
+                break
+            vidcap.release()
+        return np.asarray(movie)
+
     def _create_lut(self, filename, highpass=5, zoom=2):
+        filename = Path(filename)
         if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)']) * 1000
             self.bin_file = str(filename).replace(r'.tdms', r'ROI.bin')
+            ims = np.fromfile(self.bin_file, np.uint8)
+            roi_size = np.sqrt(len(ims) / len(z_calib)).astype(np.int32)
+            ims = ims.reshape([-1, roi_size, roi_size])
         elif '.xlsx' in filename.suffix:
             df = pd.read_excel(filename)
             z_calib = df['Piezo Position (um)'].values
-            self.bin_file = next(filename.parent.glob('*.bin'))
+            ims = self.read_avi(filename.with_name('lut.avi'))
+            roi_size = ims.shape[-1]
         else:
             raise ValueError('File type not supported')
             return
-
-        ims = np.fromfile(self.bin_file, np.uint8)
-
-        roi_size = np.sqrt(len(ims) / len(z_calib)).astype(np.int32)
-        ims = ims.reshape([-1, roi_size, roi_size])
 
         self.freqs = calc_freqs(ims[0], zoom)
         lowpass = ims.shape[-1] // zoom
@@ -210,34 +239,38 @@ class Beads():
         self._highpass = highpass
         self._lowpass = lowpass
 
-        self.z_calib, self.lut = self._resample_lut(z_calib, lut)
+        self.width_um = 0.4
+        self.z_calib, self.lut = self._resample_lut(z_calib, lut, self.width_um)
         self.roi_size = roi_size
+
         return
 
-    def _resample_lut(self, z_calib, lut, step=0.3):
-        z_array = np.linspace(np.min(z_calib), np.max(z_calib), int((np.max(z_calib) - np.min(z_calib)) / step))
-        new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, step), 0), axis=0) for z in z_array]
+    def _resample_lut(self, z_calib, lut, width_um=0.3):
+        z_array = np.linspace(np.min(z_calib), np.max(z_calib), int((np.max(z_calib) - np.min(z_calib)) / width_um))
+        new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, width_um), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
     def pick_beads(self, image):
         plt.title('Press <Enter> to finish')
-        plt.imshow(image, cmap='Greys_r', origin='lower',)
+        plt.imshow(image, cmap='Greys_r', origin='lower', vmin=0, vmax=255)
         color = 'blue'
         coords_list = []
         while True:
             c = plt.ginput(show_clicks=True, timeout=-1)
             try:
                 c = np.asarray(c).astype(np.int32)[0]
-                box = plt.Rectangle([c[0] - self.roi_size / 2, c[1] - self.roi_size / 2], self.roi_size, self.roi_size, edgecolor=color,
+                box = plt.Rectangle([c[0] - self.roi_size / 2, c[1] - self.roi_size / 2], self.roi_size, self.roi_size,
+                                    edgecolor=color,
                                     facecolor='none')
                 plt.gca().add_artist(box)
                 plt.text(c[0] - self.roi_size / 2, c[1] + self.roi_size / 1.9, f'{len(coords_list)}', color=color)
                 plt.draw()
-                coords_list.append(c)
+                coords_list.append(c[::-1])
             except IndexError:
                 break
         self.coords = np.asarray(coords_list).astype(int)
-        return
+
+        return self.coords
 
     def find_beads(self, im, n_max=100, treshold=None, show=False):
         mask = np.fft.fftshift(create_circular_mask(20, im.shape, invert=True))
@@ -306,8 +339,10 @@ class Beads():
     def process_image(self, im, coords=None):
         if coords is None:
             coords = self.coords
-        xyz = [get_xyza(*get_roi(im, 100, c)) for c in coords]
-        return np.reshape(xyz, [-1])
+
+        result = [get_xyza(get_roi(im, self.roi_size, c), self.freqs, self.lut, self.z_calib, self.width_um) for c
+                  in coords]
+        return result
 
     def get_settings(self):
         settings = {'coords': self.coords, 'size': self.roi_size, 'lowpass': self._lowpass, 'highpass': self._highpass,
@@ -318,7 +353,11 @@ class Beads():
 
 class Traces():
     def __init__(self, filename=None):
-        self.from_file(filename)
+        if filename:
+            self.from_file(filename)
+        self.traces = pd.DataFrame()
+        self.globs = pd.DataFrame()
+        self.pars = pd.DataFrame()
         return
 
     def __enter__(self):
@@ -358,20 +397,30 @@ class Traces():
     def to_file(self, filename=None):
         if filename is not None:
             self.filename = Path(filename).with_suffix('.xlsx')
+        # print(self.traces)
+        # print(self.pars)
+        # print(self.globs)
         with pd.ExcelWriter(self.filename) as writer:
-            if not self.traces.empty:
+            try:
                 self.sort_traces()
                 self.traces.to_excel(writer, sheet_name='traces', index=True, float_format='%.5f')
-            if not self.pars.empty:
+            except AttributeError:
+                pass
+            try:
                 self.pars.to_excel(writer, sheet_name='parameters')
-            if not self.globs.empty:
+            except AttributeError:
+                pass
+            try:
                 self.globs.to_excel(writer, sheet_name='globals')
+            except AttributeError:
+                pass
         print(f'Data saved to {self.filename}')
         return
 
     def sort_traces(self):
         reordered_cols = np.append([c for c in self.traces.columns if ': ' not in c],
-                                   natsorted([c for c in self.traces.columns if ': ' in c]))
+                                   natsorted([c for c in self.traces.columns if ': ' in c],
+                                             key=lambda x: x.split(':')[1], reverse=True))
         self.traces = self.traces[reordered_cols]
         self.traces.sort_index(inplace=True)
 
@@ -410,3 +459,32 @@ class Traces():
             self.globs = pd.DataFrame(columns=['parameter', 'value', 'section'])
             self.globs.loc[0] = [parameter, value, section]
             self.globs.set_index('parameter', inplace=True)
+
+    # def set_par(self, parameter, value, bead=None):
+    #     print(parameter, value, bead)
+    #     if bead is None:
+    #         self.set_glob(parameter, value, section='parameters')
+    #     else:
+    #         self.pars.loc[bead, parameter] == value
+
+    def set_par(self, parameter, value, bead=None):
+        if bead is None:
+            self.set_glob(parameter, value, section='parameters')
+        else:
+            if bead not in self.pars.index:
+                self.pars.loc[bead, parameter]= value
+            if parameter not in self.pars.columns:
+                self.pars[parameter] = np.nan
+            self.pars.loc[bead, parameter] = value
+
+
+    def add_frame_coords(self, frame, coords):
+        names = []
+        for i, bead in enumerate(coords):
+            names.extend([f'{i}: x (pix)', f'{i}: y (pix)', f'{i}: z (um)', f'{i}: a (a.u.)'])
+        try:
+            self.traces.loc[frame, names] = np.asarray(coords).reshape(-1)
+        except AttributeError:
+            self.traces = pd.DataFrame(columns=names)
+            self.traces.loc[frame] = np.asarray(coords).reshape(-1)
+        return
