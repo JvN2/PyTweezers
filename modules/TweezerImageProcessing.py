@@ -211,6 +211,14 @@ class Beads():
             vidcap.release()
         return np.asarray(movie)
 
+    def save_avi(self, movie, filename, fps=15):
+        fourcc = cv2.VideoWriter_fourcc(*'DIVX')
+        out = cv2.VideoWriter(str(filename), fourcc, fps, movie[0].T.shape, isColor=False)
+        for frame in tqdm(movie, desc='Saving avi file'):
+            out.write(frame)
+        out.release()
+        print(f'Video saved to {filename}')
+
     def _create_lut(self, filename, highpass=5, zoom=2):
         filename = Path(filename)
         if '.tdms' in filename.suffix:
@@ -221,7 +229,7 @@ class Beads():
             ims = ims.reshape([-1, roi_size, roi_size])
         elif '.xlsx' in filename.suffix:
             df = pd.read_excel(filename)
-            z_calib = df['Piezo Position (um)'].values
+            z_calib = -df['Piezo Position (um)'].values
             ims = self.read_avi(filename.with_name('lut.avi'))
             roi_size = ims.shape[-1]
         else:
@@ -250,9 +258,9 @@ class Beads():
         new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, width_um), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
-    def pick_beads(self, image):
+    def pick_beads(self, image, filename=None):
         plt.title('Press <Enter> to finish')
-        plt.imshow(image, cmap='Greys_r', origin='lower', vmin=0, vmax=255)
+        plt.imshow(image, cmap='Greys_r', vmin=0, vmax=255)
         color = 'blue'
         coords_list = []
         while True:
@@ -270,6 +278,9 @@ class Beads():
                 break
         self.coords = np.asarray(coords_list).astype(int)
 
+        if filename is not None:
+            plt.savefig(filename)
+        plt.close()
         return self.coords
 
     def find_beads(self, im, n_max=100, treshold=None, show=False):
@@ -353,11 +364,11 @@ class Beads():
 
 class Traces():
     def __init__(self, filename=None):
-        if filename:
-            self.from_file(filename)
         self.traces = pd.DataFrame()
         self.globs = pd.DataFrame()
         self.pars = pd.DataFrame()
+        if filename:
+            self.from_file(filename)
         return
 
     def __enter__(self):
@@ -424,6 +435,13 @@ class Traces():
         self.traces = self.traces[reordered_cols]
         self.traces.sort_index(inplace=True)
 
+    def add_from_excel(self, filename, column, name=None):
+        if name is None:
+            name = column
+        self.traces[name] = pd.read_excel(filename, index_col=None)[column]
+        return
+
+
     def read_log(self, filename=None):
         if filename is None:
             filename = self.filename
@@ -450,7 +468,10 @@ class Traces():
         try:
             return float(df.loc[parameter]['value'])
         except ValueError:
-            return df.loc[parameter]['value']
+            if section == 'files':
+                return df.loc['directory']['value'] + r'\\' + df.loc[parameter]['value']
+            else:
+                return df.loc[parameter]['value']
 
     def set_glob(self, parameter, value, section=''):
         try:
@@ -460,12 +481,11 @@ class Traces():
             self.globs.loc[0] = [parameter, value, section]
             self.globs.set_index('parameter', inplace=True)
 
-    # def set_par(self, parameter, value, bead=None):
-    #     print(parameter, value, bead)
-    #     if bead is None:
-    #         self.set_glob(parameter, value, section='parameters')
-    #     else:
-    #         self.pars.loc[bead, parameter] == value
+    def get_par(self, parameter, bead=None):
+        if bead is None:
+            return self.get_glob(parameter, section='parameters')
+        else:
+            return self.pars.loc[bead, parameter]
 
     def set_par(self, parameter, value, bead=None):
         if bead is None:

@@ -30,7 +30,7 @@ def display_movie(movie):
     plt.show()
 
 
-def save__avi(array, filename, fps=15):
+def save_avi(array, filename, fps=15):
     fourcc = cv2.VideoWriter_fourcc(*'DIVX')
     out = cv2.VideoWriter(str(filename), fourcc, fps, array[0].T.shape, isColor=False)
     for frame in tqdm(array, desc='Saving avi file'):
