@@ -61,6 +61,8 @@ def fit_peak(X, Y, Z):
 def get_roi(im, width, center=None):
     if center is None:
         center = np.asarray(np.shape(im)) // 2
+    else:
+        center = np.asarray(center).astype(int)
     bl = np.asarray(center) - width // 2
     bl = np.clip(bl, 0, np.asarray(np.shape(im)) - width)
     tr = bl + width
@@ -175,12 +177,12 @@ def proces_image(index, image, settings):
 
 
 class Beads():
-    def __init__(self, filename=None, pix_um=0.225, n=1.33, roi_size=128):
+    def __init__(self, lut_filename=None, pix_um=0.225, n=1.33, roi_size=128):
         self.refraction_index = n
         self.pix_um = pix_um
         self.roi_size = roi_size
-        if filename is not None:
-            self._create_lut(filename)
+        if lut_filename is not None:
+            self._create_lut(lut_filename)
         return
 
     def find_files_with_wildcard(self, filename):
@@ -196,7 +198,7 @@ class Beads():
     def read_avi(self, filename, frames=np.inf):
         filenames = self.find_files_with_wildcard(filename)
         movie = []
-        for filename in tqdm(filenames, desc='Reading avi files'):
+        for filename in tqdm(filenames, desc=f'Reading {filename}'):
             vidcap = cv2.VideoCapture(str(filename))
             num_frames = int(vidcap.get(cv2.CAP_PROP_FRAME_COUNT))
             for i in range(num_frames):
@@ -217,39 +219,73 @@ class Beads():
         for frame in tqdm(movie, desc='Saving avi file'):
             out.write(frame)
         out.release()
-        print(f'Video saved to {filename}')
+
+    def find_focus(self, lut):
+        size = lut.shape[-1]
+        high_frequencies = np.asarray([ np.percentile(np.abs(calc_fft(l))*  create_filter(size, size*0.45), 95) for l in lut])
+        high_frequencies /= np.asarray([ np.percentile(np.abs(calc_fft(l))*  create_filter(size, size*0.85), 95) for l in lut])
+        return np.argmax(high_frequencies)
 
     def _create_lut(self, filename, highpass=5, zoom=2):
         filename = Path(filename)
         if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)']) * 1000
-            self.bin_file = str(filename).replace(r'.tdms', r'ROI.bin')
-            ims = np.fromfile(self.bin_file, np.uint8)
-            roi_size = np.sqrt(len(ims) / len(z_calib)).astype(np.int32)
-            ims = ims.reshape([-1, roi_size, roi_size])
+            self.lut_filename = str(filename).replace(r'.tdms', r'ROI.bin')
+            lut = np.fromfile(self.bin_file, np.uint8)
+            roi_size = np.sqrt(len(lut) / len(z_calib)).astype(np.int32)
+            lut = lut.reshape([-1, roi_size, roi_size])
         elif '.xlsx' in filename.suffix:
             df = pd.read_excel(filename)
-            z_calib = -df['Piezo Position (um)'].values
-            ims = self.read_avi(filename.with_name('lut.avi'))
-            roi_size = ims.shape[-1]
+            try:
+                z_calib = df['z_calib (um)'].values
+                lut = self.read_avi(filename.with_suffix('.avi'))
+                self.roi_size = lut.shape[-1]
+                self.lut_filename = filename
+            except KeyError:
+                try:
+                    z_calib = df['focus (um)'].values
+                except KeyError:
+                    raise KeyError('No focus data found in excel file')
+                    return
+                movie = self.read_avi(filename.with_suffix('.avi'))
+                lut_file = filename.with_name(filename.stem + '_lut.avi')
+                coords = self.pick_beads(movie[0], n_beads=1, title='Pick bead for LUT', filename=lut_file)
+                lut = np.asarray([get_roi(im, self.roi_size, coords[0])['image'] for im in movie]).astype(np.uint8)
+
+                focus_index = self.find_focus(lut) # find the frame with the highest spatial frequencies
+                z_calib = z_calib[:focus_index]
+                z_calib -= z_calib[0]
+                z_calib /= self.refraction_index  # to um
+                lut = lut[:focus_index]
+
+                self.save_avi(lut, lut_file)
+
+                with pd.ExcelWriter(lut_file.with_suffix('.xlsx')) as writer:
+                    pd.DataFrame(z_calib, columns=['z_calib (um)']).to_excel(writer, sheet_name='traces', index=True,
+                                                                             float_format='%.5f')
+                    pd.DataFrame(coords, columns=['x0 (pix)', 'y0 (pix)']).to_excel(writer, sheet_name='parameters')
+                    globs = pd.DataFrame([['roi_pix', self.roi_size, 'settings']],
+                                         columns=['parameter', 'values', 'section'])
+                    globs.set_index('parameter', inplace=True)
+                    globs.to_excel(writer, sheet_name='globals', index=True)
+                print(f'New LUT saved to {lut_file}')
+
+                self.lut_filename = lut_file
         else:
             raise ValueError('File type not supported')
             return
 
-        self.freqs = calc_freqs(ims[0], zoom)
-        lowpass = ims.shape[-1] // zoom
+        self.freqs = calc_freqs(lut[0], zoom)
+        lowpass = lut.shape[-1] // zoom
         self.filter = create_filter(lowpass, highpass)
 
-        z_calib /= self.refraction_index  # to um
-        z_calib -= np.min(z_calib)
-        lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in ims]
+        lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in lut]
 
         self._highpass = highpass
         self._lowpass = lowpass
 
-        self.width_um = 0.4
+        self.width_um = 0.3
         self.z_calib, self.lut = self._resample_lut(z_calib, lut, self.width_um)
-        self.roi_size = roi_size
 
         return
 
@@ -258,28 +294,31 @@ class Beads():
         new_lut = [np.sum(multiply_along_axis(lut, calc_weight(z_calib, z, width_um), 0), axis=0) for z in z_array]
         return z_array, new_lut
 
-    def pick_beads(self, image, filename=None):
-        plt.title('Press <Enter> to finish')
+    def pick_beads(self, image, filename=None, n_beads=None, title=None):
+        if title is None:
+            title = 'Press <Enter> to finish'
+        plt.title(title)
         plt.imshow(image, cmap='Greys_r', vmin=0, vmax=255)
         color = 'blue'
         coords_list = []
-        while True:
+        if n_beads is None:
+            n_beads = np.inf
+        while True and len(coords_list) < n_beads:
             c = plt.ginput(show_clicks=True, timeout=-1)
             try:
                 c = np.asarray(c).astype(np.int32)[0]
                 box = plt.Rectangle([c[0] - self.roi_size / 2, c[1] - self.roi_size / 2], self.roi_size, self.roi_size,
-                                    edgecolor=color,
-                                    facecolor='none')
+                                    edgecolor=color, facecolor='none')
                 plt.gca().add_artist(box)
-                plt.text(c[0] - self.roi_size / 2, c[1] + self.roi_size / 1.9, f'{len(coords_list)}', color=color)
+                plt.text(c[0] - self.roi_size / 2, c[1] - self.roi_size / 1.9, f'{len(coords_list)}', color=color)
                 plt.draw()
                 coords_list.append(c[::-1])
             except IndexError:
                 break
-        self.coords = np.asarray(coords_list).astype(int)
+        self.coords = np.asarray(coords_list)
 
         if filename is not None:
-            plt.savefig(filename)
+            plt.savefig(filename.with_suffix('.jpg'))
         plt.close()
         return self.coords
 
@@ -369,6 +408,7 @@ class Traces():
         self.pars = pd.DataFrame()
         if filename:
             self.from_file(filename)
+            self.set_glob('LUT file', filename, 'LUT')
         return
 
     def __enter__(self):
@@ -380,7 +420,7 @@ class Traces():
     def from_file(self, filename):
         self.filename = Path(filename).with_suffix('.xlsx')
         try:
-            self.traces = pd.read_excel(self.filename, 'traces')
+            self.traces = pd.read_excel(self.filename, 'traces', index_col=0)
         except ValueError:
             self.traces = pd.DataFrame()
         except FileNotFoundError:
@@ -408,9 +448,7 @@ class Traces():
     def to_file(self, filename=None):
         if filename is not None:
             self.filename = Path(filename).with_suffix('.xlsx')
-        # print(self.traces)
-        # print(self.pars)
-        # print(self.globs)
+
         with pd.ExcelWriter(self.filename) as writer:
             try:
                 self.sort_traces()
@@ -440,7 +478,6 @@ class Traces():
             name = column
         self.traces[name] = pd.read_excel(filename, index_col=None)[column]
         return
-
 
     def read_log(self, filename=None):
         if filename is None:
@@ -492,11 +529,10 @@ class Traces():
             self.set_glob(parameter, value, section='parameters')
         else:
             if bead not in self.pars.index:
-                self.pars.loc[bead, parameter]= value
+                self.pars.loc[bead, parameter] = value
             if parameter not in self.pars.columns:
                 self.pars[parameter] = np.nan
             self.pars.loc[bead, parameter] = value
-
 
     def add_frame_coords(self, frame, coords):
         names = []
