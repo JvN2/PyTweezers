@@ -2,11 +2,14 @@ from modules.TweezerImageProcessing import Beads, Traces
 from tqdm import tqdm
 from pathlib import Path
 from matplotlib import pyplot as plt
+import numpy as np
+
+np.set_printoptions(precision=3)
+np.set_printoptions(suppress=True)
 
 
 def process_movie(filename, tracker):
     movie = tracker.read_avi(filename.with_suffix('.avi'))
-
     data = Traces(filename)
 
     if 'x0 (pix)' not in data.pars.columns:
@@ -19,12 +22,15 @@ def process_movie(filename, tracker):
     for i in tqdm(range(len(movie)), desc='Tracking'):
         beads = tracker.process_image(movie[i], data.pars[['x0 (pix)', 'y0 (pix)']].values)
         data.add_frame_coords(i, beads)
+
+    for key, val in tracker.get_settings().items():
+        data.set_glob(key, val, 'LUT')
     data.to_file()
 
 
 if __name__ == '__main__':
-    filename = Path(r'\\data03\pi-vannoort\Noort\Data\TweezerOSU\20230408\shift.xlsx')
-    tracker = Beads(filename.with_name('focus_lut.xlsx'))
+    filename = Path(r'C:\tmp\TeezersOSU\20230408\shift.xlsx')
+    tracker = Beads(filename.with_name('focus.xlsx'))
 
     process_movie(filename, tracker)
 

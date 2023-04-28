@@ -102,16 +102,11 @@ def calc_weight(x, x_array, width):
     return weight / np.sum(weight)
 
 
-def calc_freqs(im, zoom=2):
-    freqs = np.arange(len(im) / (2 * zoom))
-    return np.append(np.flip(-np.asarray(freqs + 1)), freqs).astype(int)
-
-
 def zoom_fft2(im, freqs=None):
     for _ in range(2):
         im = np.fft.fft(im).T
         im = np.asarray([im[line] for line in freqs])
-    return im
+    return im.T
 
 
 def get_peak(im):
@@ -125,6 +120,7 @@ def get_peak(im):
     peak = np.unravel_index(np.argmax(im, axis=None), shape)
     offset = np.asarray([-1, 0, 1])
     intensity = [0, 0, 0]
+    im = np.abs(im)
 
     position = peak[0] + offset
     intensity[0] = im[position[0], peak[1]] if position[0] >= 0 else im[position[0] + shape[0], peak[1]]
@@ -138,42 +134,8 @@ def get_peak(im):
     intensity[2] = im[peak[0], position[2]] if position[2] < shape[1] else im[peak[0], position[2] - shape[1]]
     y = calc_extreme(position, intensity)
 
-    center = [x, y]
-    center = [c - shape[i] if c > shape[i] / 2 else c for i, c in enumerate(center)]
-    return np.asarray(center)
-
-
-def get_xyza(roi, freqs, lut, lut_z_um, width_um=0.4, filter=None, show=False):
-    fft_im = zoom_fft2(roi['image'], freqs)
-    if filter is not None:
-        fft_im *= filter
-    cc = np.abs(np.fft.ifft2(fft_im ** 2))
-    xy = roi['center'] + get_peak(cc)
-
-    msd = np.sum((lut - np.abs(fft_im)) ** 2, axis=(1, 2))
-    msd /= np.max(msd)
-    weight = calc_weight(lut_z_um[np.argmin(msd)], lut_z_um, width_um)
-
-    p = np.polyfit(lut_z_um, msd, 2, w=weight)
-
-    if show:
-        plt.scatter(lut_z_um, msd)
-        lut_z_um = np.linspace(np.min(lut_z_um), np.max(lut_z_um), 1000)
-        plt.plot(lut_z_um, np.polyval(p, lut_z_um), color='k')
-        plt.ylim([np.min(msd), 1 + 0.5 * (1 - np.min(msd))])
-        plt.xlabel('z in (um)')
-        plt.ylabel('msd (a.u)')
-        plt.show()
-
-    z = -p[1] / (2 * p[0])
-    return *xy, z, np.max(cc)
-
-
-def proces_image(index, image, settings):
-    rois = [get_roi(image, settings['size'], coord) for coord in settings['coords']]
-    result = [get_xyza(roi, settings['freqs'], settings['lut'], settings['lut_z_um'], filter=settings['filter']) for roi
-              in rois]
-    return np.append(index, np.reshape(result, (-1)))
+    center = -np.asarray([shape[1]/2- y, shape[0]/2-x])
+    return center
 
 
 class Beads():
@@ -222,11 +184,67 @@ class Beads():
 
     def find_focus(self, lut):
         size = lut.shape[-1]
-        high_frequencies = np.asarray([ np.percentile(np.abs(calc_fft(l))*  create_filter(size, size*0.45), 95) for l in lut])
-        high_frequencies /= np.asarray([ np.percentile(np.abs(calc_fft(l))*  create_filter(size, size*0.85), 95) for l in lut])
+        high_frequencies = np.asarray(
+            [np.percentile(np.abs(calc_fft(l)) * create_filter(size, size * 0.45), 95) for l in lut])
+        high_frequencies /= np.asarray(
+            [np.percentile(np.abs(calc_fft(l)) * create_filter(size, size * 0.85), 95) for l in lut])
         return np.argmax(high_frequencies)
 
-    def _create_lut(self, filename, highpass=5, zoom=2):
+    def calc_fft2d(self, im):
+        fft_im = np.abs(np.fft.fftshift(np.fft.fft2(im)))
+        n_pix = self._mask.shape[0]
+        start_index = (im.shape[0] - n_pix) // 2
+        end_index = start_index + n_pix
+        fft_im = self._mask * fft_im[start_index:end_index, start_index:end_index]
+        return fft_im / np.sum(fft_im)
+
+    def resample_lut(self, z, lut, n_points, z_width=1):
+        new_z = np.linspace(np.min(z), np.max(z), n_points)
+        if z[-1] < z[0]:
+            new_z = new_z[::-1]
+        new_lut = [np.sum(lut * calc_weight(z, z0, z_width)[:, np.newaxis, np.newaxis], axis=0) for z0 in new_z]
+        return new_z, np.asarray(new_lut)
+
+    def get_xyz(self, roi, xy_coords):
+        def fit_minimum(x, y, width):
+            p = np.polyfit(x, y, 2, w=calc_weight(x, x[np.argmin(y)], width))
+            return -p[1] / (2 * p[0]), 1 / np.min(y)
+
+        fft_roi = self.calc_fft2d(roi)
+        diff = np.abs(np.sum((self._fft_lut - np.abs(fft_roi)) ** 2, axis=(1, 2)))
+        z0, a = fit_minimum(self._z_calib, diff, self._z_width_um)
+
+        # plt.plot(self._z_calib, diff, 'o-')
+        # plt.title(f'z0={z0:.2f}um, a={a:.2f}')
+        # plt.show()
+
+        cc = np.abs(np.fft.fftshift(np.fft.ifft2(fft_roi ** 2)))
+        xy = get_peak(cc)/2
+        # print(xy+len(fft_roi)/2)
+        #
+        # xy += len(fft_roi) / 2
+        # xy *= len(roi) / len(fft_roi)
+        # xy += xy_coords
+        #
+        # fig, (ax1, ax2) = plt.subplots(1, 2)
+        # ax1.imshow(roi, cmap='Greys_r', vmax=255, vmin=0)
+        # ax1.set_title('Image 1')
+        # ax2.imshow(cc, cmap='Greys_r')
+        # ax2.set_title('Image 2')
+        # plt.tight_layout()
+        # plt.show()
+
+        return np.asarray([*xy, z0, a])
+
+    def get_settings(self):
+        settings = {}
+        settings['highpass'] = self._highpass
+        settings['lowpass'] = self._lowpass
+        settings['z_width'] = self._z_width_um
+        settings['resampled_z'] = len(self._z_calib)
+        return settings
+
+    def _create_lut(self, filename, highpass=20, lowpass=50, z_width=0.25):
         filename = Path(filename)
         if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)']) * 1000
@@ -252,11 +270,12 @@ class Beads():
                 coords = self.pick_beads(movie[0], n_beads=1, title='Pick bead for LUT', filename=lut_file)
                 lut = np.asarray([get_roi(im, self.roi_size, coords[0])['image'] for im in movie]).astype(np.uint8)
 
-                focus_index = self.find_focus(lut) # find the frame with the highest spatial frequencies
-                z_calib = z_calib[:focus_index]
-                z_calib -= z_calib[0]
+                focus_index = self.find_focus(lut)  # find the frame with the highest spatial frequencies
+                z_calib = z_calib[focus_index:]
+                z_calib = np.max(z_calib) - z_calib
                 z_calib /= self.refraction_index  # to um
-                lut = lut[:focus_index]
+                z_calib -= 1  # add 1 um margin to avoid negative values
+                lut = lut[focus_index:]
 
                 self.save_avi(lut, lut_file)
 
@@ -275,18 +294,14 @@ class Beads():
             raise ValueError('File type not supported')
             return
 
-        self.freqs = calc_freqs(lut[0], zoom)
-        lowpass = lut.shape[-1] // zoom
-        self.filter = create_filter(lowpass, highpass)
-
-        lut = [np.abs(zoom_fft2(im, freqs=self.freqs)) * self.filter for im in lut]
-
         self._highpass = highpass
         self._lowpass = lowpass
+        self._z_width_um = z_width
 
-        self.width_um = 0.3
-        self.z_calib, self.lut = self._resample_lut(z_calib, lut, self.width_um)
-
+        self._mask = create_filter(lowpass, highpass)
+        self._fft_lut = np.asarray([self.calc_fft2d(frame) for frame in lut])
+        self._z_calib = z_calib
+        # self._z_calib, self._fft_lut = self.resample_lut(z_calib, self._fft_lut, 50, z_width=z_width)
         return
 
     def _resample_lut(self, z_calib, lut, width_um=0.3):
@@ -327,8 +342,7 @@ class Beads():
         cc = np.ones_like(im).astype(float)
         for period in tqdm([38.4, 29.3, 47.5, 52.0], postfix='Cross correlating with ref images'):
             ref_im = create_ref_image(period, shape=im.shape, width=period * 10)
-            cc *= np.abs(np.fft.ifft2(mask * np.fft
-                                      .fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
+            cc *= np.abs(np.fft.ifft2(mask * np.fft.fft2(im) * np.conjugate(np.fft.fft2(ref_im))))
         cc = np.abs(np.fft.fftshift(cc))
         cc /= np.percentile(cc, 99.9)
 
@@ -382,24 +396,11 @@ class Beads():
     def set_roi_coords(self, coords):
         self.coords = coords
 
-    def process_roi(self, im, xy):
-        return get_xyza(*get_roi(im, 100, *xy))
-        # return np.append(xy, [3])
-
     def process_image(self, im, coords=None):
         if coords is None:
             coords = self.coords
-
-        result = [get_xyza(get_roi(im, self.roi_size, c), self.freqs, self.lut, self.z_calib, self.width_um) for c
-                  in coords]
+        result = np.asarray([self.get_xyz(get_roi(im, self.roi_size, c)['image'], c) for c in coords]).astype(float)
         return result
-
-    def get_settings(self):
-        settings = {'coords': self.coords, 'size': self.roi_size, 'lowpass': self._lowpass, 'highpass': self._highpass,
-                    'lut': self.lut, 'lut_z_um': self.z_calib, 'pix_um': self.pix_um, 'filter': self.filter,
-                    'freqs': self.freqs}
-        return settings
-
 
 class Traces():
     def __init__(self, filename=None):
