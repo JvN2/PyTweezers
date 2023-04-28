@@ -134,7 +134,8 @@ def get_peak(im):
     intensity[2] = im[peak[0], position[2]] if position[2] < shape[1] else im[peak[0], position[2] - shape[1]]
     y = calc_extreme(position, intensity)
 
-    center = -np.asarray([shape[1]/2- y, shape[0]/2-x])
+    center = np.asarray([y, x])
+    # center = -np.asarray([shape[1] / 2 - y, shape[0] / 2 - x])
     return center
 
 
@@ -191,12 +192,14 @@ class Beads():
         return np.argmax(high_frequencies)
 
     def calc_fft2d(self, im):
-        fft_im = np.abs(np.fft.fftshift(np.fft.fft2(im)))
+        fft_im = np.fft.fftshift(np.fft.fft2(im))
         n_pix = self._mask.shape[0]
         start_index = (im.shape[0] - n_pix) // 2
         end_index = start_index + n_pix
         fft_im = self._mask * fft_im[start_index:end_index, start_index:end_index]
-        return fft_im / np.sum(fft_im)
+        cc = np.fft.fftshift(np.abs(np.fft.ifft2(fft_im ** 2)))
+        fft_im = np.abs(fft_im) / np.sum(np.abs(fft_im))
+        return fft_im, cc
 
     def resample_lut(self, z, lut, n_points, z_width=1):
         new_z = np.linspace(np.min(z), np.max(z), n_points)
@@ -205,34 +208,35 @@ class Beads():
         new_lut = [np.sum(lut * calc_weight(z, z0, z_width)[:, np.newaxis, np.newaxis], axis=0) for z0 in new_z]
         return new_z, np.asarray(new_lut)
 
-    def get_xyz(self, roi, xy_coords):
+    def get_xyz(self, roi, xy_coords, show = False):
         def fit_minimum(x, y, width):
             p = np.polyfit(x, y, 2, w=calc_weight(x, x[np.argmin(y)], width))
             return -p[1] / (2 * p[0]), 1 / np.min(y)
 
-        fft_roi = self.calc_fft2d(roi)
+        fft_roi, cc = self.calc_fft2d(roi)
         diff = np.abs(np.sum((self._fft_lut - np.abs(fft_roi)) ** 2, axis=(1, 2)))
         z0, a = fit_minimum(self._z_calib, diff, self._z_width_um)
 
-        # plt.plot(self._z_calib, diff, 'o-')
-        # plt.title(f'z0={z0:.2f}um, a={a:.2f}')
-        # plt.show()
+        if show:
+            plt.plot(self._z_calib, diff, 'o-')
+            plt.title(f'z0={z0:.2f}um, a={a:.2f}')
+            plt.show()
 
-        cc = np.abs(np.fft.fftshift(np.fft.ifft2(fft_roi ** 2)))
-        xy = get_peak(cc)/2
-        # print(xy+len(fft_roi)/2)
-        #
-        # xy += len(fft_roi) / 2
-        # xy *= len(roi) / len(fft_roi)
-        # xy += xy_coords
-        #
-        # fig, (ax1, ax2) = plt.subplots(1, 2)
-        # ax1.imshow(roi, cmap='Greys_r', vmax=255, vmin=0)
-        # ax1.set_title('Image 1')
-        # ax2.imshow(cc, cmap='Greys_r')
-        # ax2.set_title('Image 2')
-        # plt.tight_layout()
-        # plt.show()
+        xy = get_peak(cc)
+        xy -= fft_roi.shape[0] / 2
+        xy /= 2
+        xy *= roi.shape[0] / fft_roi.shape[0]
+
+        xy += xy_coords
+
+        if show:
+            fig, (ax1, ax2) = plt.subplots(1, 2)
+            ax1.imshow(roi, cmap='Greys_r', vmax=255, vmin=0)
+            ax1.set_title(f'peak @ {xy - xy_coords + roi.shape[0] / 2}')
+            ax2.imshow(cc, cmap='Greys_r')
+            ax2.set_title(f'peak @ {get_peak(cc)}')
+            plt.tight_layout()
+            plt.show()
 
         return np.asarray([*xy, z0, a])
 
@@ -244,7 +248,7 @@ class Beads():
         settings['resampled_z'] = len(self._z_calib)
         return settings
 
-    def _create_lut(self, filename, highpass=20, lowpass=50, z_width=0.25):
+    def _create_lut(self, filename, highpass=20, lowpass=90, z_width=0.25):
         filename = Path(filename)
         if '.tdms' in filename.suffix:
             z_calib = np.asarray(TdmsFile(filename)['Tracking data']['Focus (mm)']) * 1000
@@ -299,7 +303,7 @@ class Beads():
         self._z_width_um = z_width
 
         self._mask = create_filter(lowpass, highpass)
-        self._fft_lut = np.asarray([self.calc_fft2d(frame) for frame in lut])
+        self._fft_lut = np.asarray([self.calc_fft2d(frame)[0] for frame in lut])
         self._z_calib = z_calib
         # self._z_calib, self._fft_lut = self.resample_lut(z_calib, self._fft_lut, 50, z_width=z_width)
         return
@@ -401,6 +405,7 @@ class Beads():
             coords = self.coords
         result = np.asarray([self.get_xyz(get_roi(im, self.roi_size, c)['image'], c) for c in coords]).astype(float)
         return result
+
 
 class Traces():
     def __init__(self, filename=None):

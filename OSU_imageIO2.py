@@ -30,7 +30,7 @@ def process_movie(filename, tracker):
 
 if __name__ == '__main__':
     filename = Path(r'C:\tmp\TeezersOSU\20230408\shift.xlsx')
-    tracker = Beads(filename.with_name('focus.xlsx'))
+    tracker = Beads(filename.with_name('focus_lut.xlsx'))
 
     process_movie(filename, tracker)
 
