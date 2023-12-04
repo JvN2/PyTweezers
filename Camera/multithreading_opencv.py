@@ -35,8 +35,8 @@ import numpy
 from vmbpy import *
 
 FRAME_QUEUE_SIZE = 10
-FRAME_HEIGHT = 480
-FRAME_WIDTH = 480
+FRAME_HEIGHT = 1020
+FRAME_WIDTH = 1280
 
 
 def print_preamble():
@@ -147,12 +147,12 @@ class FrameProducer(threading.Thread):
         set_nearest_value(self.cam, 'Width', FRAME_WIDTH)
 
         # Try to enable automatic exposure time setting
-        try:
-            self.cam.ExposureAuto.set('Once')
+        # try:
+        #     self.cam.ExposureAuto.set('Once')
 
-        except (AttributeError, VmbFeatureError):
-            self.log.info('Camera {}: Failed to set Feature \'ExposureAuto\'.'.format(
-                          self.cam.get_id()))
+        # except (AttributeError, VmbFeatureError):
+        #     self.log.info('Camera {}: Failed to set Feature \'ExposureAuto\'.'.format(
+        #                   self.cam.get_id()))
 
         self.cam.set_pixel_format(PixelFormat.Mono8)
 
@@ -217,6 +217,7 @@ class FrameConsumer(threading.Thread):
             # Construct image by stitching frames together.
             if frames:
                 cv_images = [resize_if_required(frames[cam_id]) for cam_id in sorted(frames.keys())]
+                #print(numpy.shape(cv_images))
                 cv2.imshow(IMAGE_CAPTION, numpy.concatenate(cv_images, axis=1))
 
             # If there are no frames available, show dummy image instead
