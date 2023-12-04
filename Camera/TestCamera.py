@@ -11,15 +11,17 @@ def list_cameras():
     print('Available cameras:')
     with vmb:
         cams = vmb.get_all_cameras()
-        for cam in cams:
+        for cam in cams: 
             print('+',cam)
 
   
 
 if __name__ == '__main__':
     list_cameras()
-    camera = cam.MainThread()
+    camera = cam.MainThread(filename='test.avi')
     camera.start()
-    time.sleep(2)
-    print(camera.frame_queue.qsize())
+    time.sleep(5)
+    camera.stop()
     camera.join()
+
+

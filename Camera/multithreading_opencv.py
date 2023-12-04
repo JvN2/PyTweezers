@@ -179,12 +179,13 @@ class FrameProducer(threading.Thread):
         self.log.info('Thread \'FrameProducer({})\' terminated.'.format(self.cam.get_id()))
 
 
-class FrameConsumer(threading.Thread):
-    def __init__(self, frame_queue: queue.Queue):
+class FrameConsumer(threading.Thread, ):
+    def __init__(self, frame_queue: queue.Queue, filename = None):
         threading.Thread.__init__(self)
 
         self.log = Log.get_instance()
         self.frame_queue = frame_queue
+        self.filename = filename
 
     def run(self):
         IMAGE_CAPTION = 'Multithreading Example: Press <Enter> to exit'
@@ -192,8 +193,15 @@ class FrameConsumer(threading.Thread):
 
         frames = {}
         alive = True
+        frame_count = 0
+        self.running = True
 
         self.log.info('Thread \'FrameConsumer\' started.')
+
+        if self.filename is not None:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Define codec for MP4 files
+            out = cv2.VideoWriter(self.filename, fourcc, 50.0, (FRAME_WIDTH, FRAME_HEIGHT))  # Specify filename, codec, FPS, and frame size
+
 
         while alive:
             # Update current state by dequeuing all currently available frames.
@@ -208,6 +216,7 @@ class FrameConsumer(threading.Thread):
                 # Add/Remove frame from current state.
                 if frame:
                     frames[cam_id] = frame
+                    frame_count += 1
 
                 else:
                     frames.pop(cam_id, None)
@@ -217,28 +226,40 @@ class FrameConsumer(threading.Thread):
             # Construct image by stitching frames together.
             if frames:
                 cv_images = [resize_if_required(frames[cam_id]) for cam_id in sorted(frames.keys())]
-                #print(numpy.shape(cv_images))
-                cv2.imshow(IMAGE_CAPTION, numpy.concatenate(cv_images, axis=1))
+                cv_images = numpy.reshape(cv_images, ( FRAME_HEIGHT,FRAME_WIDTH))
+                cv2.imshow(IMAGE_CAPTION, cv_images)
+
+                if self.filename is not None:
+                    im = numpy.repeat(cv_images[:, :, numpy.newaxis], 3, axis=2)
+                    cv2.putText(im, f'Frame = {frame_count}', org=(30, 30),
+                        fontScale=2, color=255, thickness=2, fontFace=cv2.FONT_HERSHEY_COMPLEX_SMALL)
+                    out.write(im)
 
             # If there are no frames available, show dummy image instead
             else:
                 cv2.imshow(IMAGE_CAPTION, create_dummy_frame())
 
             # Check for shutdown condition
-            if KEY_CODE_ENTER == cv2.waitKey(10):
+            if KEY_CODE_ENTER == cv2.waitKey(10) or not self.running:
                 cv2.destroyAllWindows()
                 alive = False
+                if self.filename is not None:
+                    out.release()
 
         self.log.info('Thread \'FrameConsumer\' terminated.')
 
 
 class MainThread(threading.Thread):
-    def __init__(self):
+    def __init__(self, filename = None):
         threading.Thread.__init__(self)
+
+        self.filename = filename
+        self._should_stop = False
 
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
         self.producers = {}
         self.producers_lock = threading.Lock()
+
 
     def __call__(self, cam: Camera, event: CameraEvent):
         # New camera was detected. Create FrameProducer, add it to active FrameProducers
@@ -256,7 +277,7 @@ class MainThread(threading.Thread):
 
     def run(self):
         log = Log.get_instance()
-        consumer = FrameConsumer(self.frame_queue)
+        self.consumer = FrameConsumer(self.frame_queue, filename=self.filename)
 
         vmb = VmbSystem.get_instance()
         vmb.enable_log(LOG_CONFIG_INFO_CONSOLE_ONLY)
@@ -275,8 +296,8 @@ class MainThread(threading.Thread):
 
             # Start and wait for consumer to terminate
             vmb.register_camera_change_handler(self)
-            consumer.start()
-            consumer.join()
+            self.consumer.start()
+            self.consumer.join()
             vmb.unregister_camera_change_handler(self)
 
             # Stop all FrameProducer threads
@@ -290,6 +311,12 @@ class MainThread(threading.Thread):
                     producer.join()
 
         log.info('Thread \'MainThread\' terminated.')
+
+    def stop(self):
+        print('Stop now!')
+        self.consumer.running = False
+
+
 
 
 if __name__ == '__main__':
