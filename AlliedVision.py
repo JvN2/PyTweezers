@@ -1,29 +1,3 @@
-"""BSD 2-Clause License
-
-Copyright (c) 2022, Allied Vision Technologies GmbH
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this
-   list of conditions and the following disclaimer.
-
-2. Redistributions in binary form must reproduce the above copyright notice,
-   this list of conditions and the following disclaimer in the documentation
-   and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
-DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
-SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
-CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
-OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
-OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-"""
 import copy
 import queue
 import threading
@@ -37,13 +11,6 @@ from vmbpy import *
 FRAME_QUEUE_SIZE = 10
 FRAME_HEIGHT = 480
 FRAME_WIDTH = 480
-
-
-def print_preamble():
-    print('////////////////////////////////////////')
-    print('/// VmbPy Multithreading Example ///////')
-    print('////////////////////////////////////////\n')
-    print(flush=True)
 
 
 def add_camera_id(frame: Frame, cam_id: str) -> Frame:
@@ -67,12 +34,11 @@ def resize_if_required(frame: Frame) -> numpy.ndarray:
     return cv_frame
 
 
-def create_dummy_frame() -> numpy.ndarray:
-    cv_frame = numpy.zeros((FRAME_HEIGHT, FRAME_WIDTH, 1), numpy.uint8)
-    cv_frame[:] = 0
+def create_dummy_frame(mean=0) -> numpy.ndarray:
+    cv_frame = numpy.random.poisson(mean, (FRAME_HEIGHT, FRAME_WIDTH, 1)).astype(numpy.uint8)
 
-    cv2.putText(cv_frame, 'No Stream available. \nPlease connect a Camera.', org=(30, 30),
-                fontScale=1, color=255, thickness=1, fontFace=cv2.FONT_HERSHEY_COMPLEX_SMALL)
+    # cv2.putText(cv_frame, 'No Stream available. \nPlease connect a Camera.', org=(30, 30),
+    #             fontScale=1, color=255, thickness=1, fontFace=cv2.FONT_HERSHEY_COMPLEX_SMALL)
 
     return cv_frame
 
@@ -266,7 +232,7 @@ class CameraApplication:
 
         self.consumer.stop()
 
-    def run(self):
+    def start(self):
         log = Log.get_instance()
         log.setLevel(0)
 
@@ -307,4 +273,4 @@ class CameraApplication:
 if __name__ == '__main__':
     print_preamble()
     app = CameraApplication()
-    app.run()
+    app.start()
