@@ -1,4 +1,5 @@
 import tkinter as tk
+from tkinter import messagebox
 from DummyCamera import CameraApplication
 import cv2
 
@@ -33,10 +34,11 @@ class MainApp:
         self.camera.stop()
 
     def exit_application(self):
+        self.stop_camera()
         self.root.quit()
 
     def show_about(self):
-        tk.messagebox.showinfo("About", "Camera Control Application")
+        messagebox.showinfo("About", "Camera Control Application")
 
 
 if __name__ == "__main__":
