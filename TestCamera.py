@@ -10,7 +10,7 @@ class MainApp:
         self.settings = {"roi_size": 50, "rois": [(50, 50), (100, 200), (198, 350)]}
         self.root = root
         self.root.title("Camera Control")
-        self.camera = CameraApplication()
+        self.camera = CameraApplication(dummy = True)
 
         menubar = tk.Menu(root)
         root.config(menu=menubar)

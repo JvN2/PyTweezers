@@ -5,10 +5,16 @@ import numpy as np
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from vmbpy import *
+    DUMMY = False
+except ImportError:
+    DUMMY = True
 
 FRAME_QUEUE_SIZE = 10
 FRAME_HEIGHT = 480
 FRAME_WIDTH = FRAME_HEIGHT
+DUMMY = True
 
 
 def get_roi(frame, center, size):
@@ -85,14 +91,14 @@ def create_dummy_frame(mean=200, settings=None) -> np.ndarray:
 
 
 class CameraApplication:
-    def __init__(self):
+    def __init__(self, dummy=False):
         self.running = False
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
         self.producer_thread = None
         self.consumer_thread = None
 
     def get_camera_id(self):
-        return "dummy_camera"
+        return "dummy_camera" if DUMMY else "allied_vision_camera"
 
     def start(self, settings=None):
         self.settings = settings
@@ -121,15 +127,27 @@ class CameraApplication:
         return frame
 
     def _produce_frames(self):
-        while self.running:
-            frame = create_dummy_frame(settings=self.settings)
-            self.frame_nr += 1
-            try:
-                self.frame_queue.put_nowait((self.frame_nr, frame))
-            except queue.Full:
-                pass
-
-            threading.Event().wait(1 / 60)  # Simulate 30 FPS
+        if DUMMY:
+            while self.running:
+                if not self.frame_queue.full():
+                    frame = create_dummy_frame(settings=self.settings)
+                    self.frame_nr += 1
+                    try:
+                        self.frame_queue.put_nowait((self.frame_nr, frame))
+                    except queue.Full:
+                        pass
+                threading.Event().wait(1 / 60)  # Simulate 30 FPS
+        else:
+            self.allied_vision_camera.start()
+            while self.running:
+                if not self.frame_queue.full():
+                    frame = self.allied_vision_camera.get_frame()
+                    self.frame_nr += 1
+                    try:
+                        self.frame_queue.put_nowait((self.frame_nr, frame))
+                    except queue.Full:
+                        pass
+            self.allied_vision_camera.stop()
 
     def _consume_frames(self):
         alive = True
@@ -173,7 +191,7 @@ class CameraApplication:
 
 
 if __name__ == "__main__":
-    cam = CameraApplication()
+    cam = CameraApplication(dummy=True)
 
     settings = {"roi_size": 100, "rois": [(70, 190), (100, 200), (198, 350)]}
     cam.start(settings)
