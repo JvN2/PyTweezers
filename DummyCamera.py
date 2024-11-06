@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
+from AV2 import FrameProducer
 
 try:
     from vmbpy import *
@@ -127,7 +128,7 @@ class CameraApplication:
         return frame
 
     def _produce_frames(self):
-        if DUMMY:
+        if False:
             while self.running:
                 if not self.frame_queue.full():
                     frame = create_dummy_frame(settings=self.settings)
@@ -138,16 +139,7 @@ class CameraApplication:
                         pass
                 threading.Event().wait(1 / 60)  # Simulate 30 FPS
         else:
-            self.allied_vision_camera.start()
-            while self.running:
-                if not self.frame_queue.full():
-                    frame = self.allied_vision_camera.get_frame()
-                    self.frame_nr += 1
-                    try:
-                        self.frame_queue.put_nowait((self.frame_nr, frame))
-                    except queue.Full:
-                        pass
-            self.allied_vision_camera.stop()
+            FrameProducer(self.frame_queue).start()
 
     def _consume_frames(self):
         alive = True
@@ -158,11 +150,14 @@ class CameraApplication:
                 # process_frame(frame_nr, frame, self.settings)
                 # display frames
                 if frame_nr % 1 == 0:
-                    cv_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-                    plot_rois(cv_frame, self.settings)
-                    cv2.imshow(self.get_camera_id(), cv_frame)
-                    cv2.namedWindow(self.get_camera_id())
-                    cv2.setMouseCallback(self.get_camera_id(), self._mouse_callback)
+                    try:
+                        cv_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+                        plot_rois(cv_frame, self.settings)
+                        cv2.imshow(self.get_camera_id(), cv_frame)
+                        cv2.namedWindow(self.get_camera_id())
+                        cv2.setMouseCallback(self.get_camera_id(), self._mouse_callback)
+                    except cv2.error:
+                        pass
             if cv2.waitKey(10) == 13 or not self.running:  # 13 is the Enter key
                 cv2.destroyAllWindows()
                 alive = False
