@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from time import sleep
 from concurrent.futures import ThreadPoolExecutor
-from AV2 import FrameProducer
+from AlliedVision import FrameProducer
 
 try:
     from vmbpy import *
@@ -97,6 +97,11 @@ class CameraApplication:
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
         self.producer_thread = None
         self.consumer_thread = None
+        if not dummy:
+            self.vmb = VmbSystem.get_instance()
+        else:
+            self.vmb = None
+
 
     def get_camera_id(self):
         return "dummy_camera" if DUMMY else "allied_vision_camera"
@@ -105,8 +110,18 @@ class CameraApplication:
         self.settings = settings
         self.frame_nr = -1
         self.running = True
-        self.producer_thread = threading.Thread(target=self._produce_frames)
-        self.producer_thread.start()
+        
+        if self.vmb:
+            with self.vmb:
+                for cam in self.vmb.get_all_cameras():
+                    print(f"Camera ID: {cam.get_id()}")
+                    self.producer_thread = FrameProducer(cam, self.frame_queue)
+                    self.producer_thread.start()
+        else:
+            self.producer_thread = threading.Thread(target=self._produce_frames)
+            self.producer_thread.start()
+
+
         self.consumer_thread = threading.Thread(target=self._consume_frames)
         self.consumer_thread.start()
 
@@ -128,7 +143,7 @@ class CameraApplication:
         return frame
 
     def _produce_frames(self):
-        if False:
+        if self.vmb is None:
             while self.running:
                 if not self.frame_queue.full():
                     frame = create_dummy_frame(settings=self.settings)
@@ -142,6 +157,7 @@ class CameraApplication:
             FrameProducer(self.frame_queue).start()
 
     def _consume_frames(self):
+
         alive = True
         while alive:
             if not self.frame_queue.empty():
@@ -149,15 +165,15 @@ class CameraApplication:
                 # Process the frame (dummy processing here)
                 # process_frame(frame_nr, frame, self.settings)
                 # display frames
-                if frame_nr % 1 == 0:
-                    try:
-                        cv_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-                        plot_rois(cv_frame, self.settings)
-                        cv2.imshow(self.get_camera_id(), cv_frame)
-                        cv2.namedWindow(self.get_camera_id())
-                        cv2.setMouseCallback(self.get_camera_id(), self._mouse_callback)
-                    except cv2.error:
-                        pass
+                # if frame_nr % 1 == 0:
+                try:
+                    cv_frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+                    plot_rois(cv_frame, self.settings)
+                    cv2.imshow(self.get_camera_id(), cv_frame)
+                    cv2.namedWindow(self.get_camera_id())
+                    cv2.setMouseCallback(self.get_camera_id(), self._mouse_callback)
+                except cv2.error:
+                    pass
             if cv2.waitKey(10) == 13 or not self.running:  # 13 is the Enter key
                 cv2.destroyAllWindows()
                 alive = False
@@ -186,7 +202,7 @@ class CameraApplication:
 
 
 if __name__ == "__main__":
-    cam = CameraApplication(dummy=True)
+    cam = CameraApplication(dummy=False)
 
     settings = {"roi_size": 100, "rois": [(70, 190), (100, 200), (198, 350)]}
     cam.start(settings)
