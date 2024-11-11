@@ -59,7 +59,7 @@ class FrameProducer(threading.Thread):
     def setup_camera(self):
         adjust_cam_setting(self.cam, "Height", FRAME_HEIGHT)
         adjust_cam_setting(self.cam, "Width", FRAME_WIDTH)
-
+        print(self.cam.get_all_features())
         # Try to enable automatic exposure time setting
         # try:
         #     self.cam.ExposureAuto.set('Once')

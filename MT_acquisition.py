@@ -10,7 +10,16 @@ import cv2
 class MainApp:
     def __init__(self, root):
 
-        self.settings = {"roi_size": 50, "rois": [(50, 50), (100, 200), (198, 350)]}
+        self.settings = {}
+        self.settings["roi_size (pix)"] = 50
+        self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
+        self.settings['height (pix)'] = 1000
+        self.settings['width (pix)'] = 1000
+        self.settings['zoom'] = 1
+        self.settings['selected'] = 0
+        self.settings['window (pix)'] = 1000
+        self.settings['center pix()'] = (self.settings['window (pix)'] / 2, self.settings['window (pix)'] / 2)
+
         self.root = root
         self.root.title("Camera Control") 
 
@@ -33,26 +42,22 @@ class MainApp:
 
 
     def start_camera(self):
-        # self.camera.start(self.settings)
-        self.dummy_camera.start(self.settings)
+        self.camera = CameraApplication(settings=self.settings)
+        # self.camera = CameraApplication()
+        threading.Thread(target=self.camera.run).start()
 
     def stop_camera(self):
-        self.dummy_camera.stop()
         self.camera.stop()
 
     def exit_application(self):
         self.stop_camera()
-        self.dummy_camera.stop()
         self.root.quit()
 
     def show_about(self):
         messagebox.showinfo("About", "Camera Control Application")
 
     def test(self):
-        self.camera = CameraApplication()
-        threading.Thread(target=self.camera.run).start()
-        # sleep(2)
-        # self.camera.stop()
+        print("Test")
 
 
 
