@@ -79,7 +79,7 @@ class FrameConsumer:
                 )
                 rois = extract_rois(cv_images, self.settings)
                 cv_images = plot_rois(cv_images, self.settings)
-                cv_images = self._get_zoom(cv_images)
+                # cv_images = self._get_zoom(cv_images)
                 cv2.imshow(IMAGE_CAPTION, cv_images)
                 cv2.namedWindow(IMAGE_CAPTION)
                 cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
@@ -92,67 +92,53 @@ class FrameConsumer:
     def stop(self):
         self.quit = True
 
+    def _update_fov(self, center=None, width=None):
+        if width is None:
+            width = min(self.settings["fov (pix)"][1] - self.settings["fov (pix)"][0])
+        half_width = min(width, *self.settings["camera (pix)"]) // 2
+        if center is None:
+            center = np.sum(self.settings["fov (pix)"], axis=1) // 2
+
+        # Calculate initial FOV coordinates
+        fov = np.array([center - half_width, center + half_width])
+
+        # Adjust FOV coordinates if they exceed the camera boundaries
+        if fov[0, 0] < 0:
+            fov[:, 0] -= fov[0, 0]
+        if fov[0, 1] < 0:
+            fov[:, 1] -= fov[0, 1]
+        if fov[1, 0] > self.settings["camera (pix)"][0]:
+            fov[:, 0] -= fov[1, 0] - self.settings["camera (pix)"][0]
+        if fov[1, 1] > self.settings["camera (pix)"][1]:
+            fov[:, 1] -= fov[1, 1] - self.settings["camera (pix)"][1]
+
+        # Ensure FOV is within camera boundaries
+        self.settings["fov (pix)"] = np.clip(fov, 0, self.settings["camera (pix)"])
+        return
+
     def _get_zoom(self, cv_frame: np.ndarray) -> np.ndarray:
+        x0 = self.settings.get("fov (pix)", 0)[0][0]
+        x1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][0]
+        y0 = self.settings.get("fov (pix)", 0)[0][1]
+        y1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][1]
+        cv_frame = cv_frame[y0:y1, :, x0:x1, :]
         return cv_frame
-        def extract_square(image: np.ndarray, center: tuple, width: int) -> np.ndarray:
-            print(center, width)
-            height, img_width = image.shape[:2]
-            half_width = width // 2
-            x, y = center
-
-            # Calculate the coordinates of the top-left and bottom-right corners
-            x0, x1 = x - half_width, x + half_width
-            y0, y1 = y - half_width, y + half_width
-
-            # Adjust the coordinates if they exceed the image boundaries
-            if x0 < 0:
-                x0 = 0
-                x1 = width
-            if x1 > img_width:
-                x1 = img_width
-                x0 = img_width - width
-            if y0 < 0:
-                y0 = 0
-                y1 = width
-            if y1 > height:
-                y1 = height
-                y0 = height - width
-
-            # Ensure the coordinates are within the image boundaries
-            x0 = max(0, x0)
-            x1 = min(img_width, x1)
-            y0 = max(0, y0)
-            y1 = min(height, y1)
-
-            # Extract the square region from the image
-            square = image[y0:y1, :, x0:x1, :]
-
-            return square, (x0, y0)
-
-        new, offset = extract_square(
-            cv_frame,
-            self.settings.get("rois", [0])[self.settings.get("selected", 0)],
-            self.settings.get("window (pix)", 1000),
-        )
-        self.settings["offset (pix)"] = offset
-        print(new.shape)
-
-        return cv_frame
-
-    # if zoom != 1:
-    #     height, width = cv_frame.shape[:2]
-    #     new_height, new_width = int(height * zoom), int(width * zoom)
-    #     if new_height <= 0 or new_width <= 0:
-    #         raise ValueError(f"Invalid dimensions after resizing: {new_height}x{new_width}")
-    #     cv_frame = cv2.resize(cv_frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
-    # return cv_frame
 
     def _mouse_callback(self, event, x, y, flags, param):
         x, y = (
-            int(x / self.settings.get("zoom (pix)", 1) + self.settings.get("offset (pix)", [0, 0])[0]),
-            int(y / self.settings.get("zoom (pix)", 1) + self.settings.get("offset (pix)", [0, 0])[1]),
+            int(
+                x / self.settings.get("zoom (pix)", 1)
+                + self.settings.get("offset (pix)", [0, 0])[0]
+            ),
+            int(
+                y / self.settings.get("zoom (pix)", 1)
+                + self.settings.get("offset (pix)", [0, 0])[1]
+            ),
         )
+        roi_size = self.settings["roi_size (pix)"]
+
         if flags & cv2.EVENT_FLAG_CTRLKEY:
+            # add or remove roi
             if event == cv2.EVENT_LBUTTONDOWN:
                 if len(self.settings["rois"]) == 0:
                     self.settings["rois"].append([x, y])
@@ -160,34 +146,39 @@ class FrameConsumer:
                 dist = np.abs(
                     np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
                 )
-                in_roi = np.all((dist < self.settings["roi_size (pix)"] // 2), axis=1)
+                in_roi = np.all((dist < roi_size // 2), axis=1)
                 index = np.where(in_roi)[0]
                 if len(index) > 0:
                     self.settings["rois"].pop(index[0])
                     self.settings["selected"] = max(0, self.settings["selected"] - 1)
                 else:
-                    margin = self.settings["roi_size (pix)"] // 2
-                    if (margin < x < self.settings["width (pix)"] - margin) & (
-                        margin < y < self.settings["height (pix)"] - margin
+                    margin = roi_size // 2
+                    print(x,y)
+                    if (margin < x < self.settings["camera (pix)"][0] - margin) & (
+                        margin < y < self.settings["camera (pix)"][1] - margin
                     ):
                         self.settings["rois"].append([x, y])
                         self.settings["selected"] = len(self.settings["rois"]) - 1
-        elif flags & cv2.EVENT_LBUTTONDOWN:
 
+
+        elif flags & cv2.EVENT_LBUTTONDOWN:
+            # select roi
             dist = np.abs(
                 np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
             )
-            in_roi = np.all((dist < self.settings["roi_size (pix)"] // 2), axis=1)
+            in_roi = np.all((dist < roi_size // 2), axis=1)
             index = np.where(in_roi)[0]
             if len(index) > 0:
                 self.settings["selected"] = index[0]
 
         if event == cv2.EVENT_MOUSEWHEEL:
+            # zoom in or out
             if flags > 0:
-                self.settings["zoom"] *= 1.5
-                if self.settings["zoom"] > 3:
-                    self.settings["zoom"] = 3
+                roi_size *= 1.3
             else:
-                self.settings["zoom"] /= 1.5
-                if self.settings["zoom"] < 0.25:
-                    self.settings["zoom"] = 0.25
+                roi_size /= 1.3
+            self._update_fov(width=roi_size)
+
+
+if __name__ == "__main__":
+    print("This is a module, not a standalone script.")

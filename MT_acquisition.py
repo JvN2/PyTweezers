@@ -4,21 +4,13 @@ from AlliedVision import CameraApplication
 import DummyCamera
 import threading
 from time import sleep
-import cv2
+import numpy as np
 
 
 class MainApp:
     def __init__(self, root):
 
-        self.settings = {}
-        self.settings["roi_size (pix)"] = 50
-        self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
-        self.settings['height (pix)'] = 1000
-        self.settings['width (pix)'] = 1000
-        self.settings['zoom'] = 1
-        self.settings['selected'] = 0
-        self.settings['window (pix)'] = 1000
-        self.settings['center pix()'] = (self.settings['window (pix)'] / 2, self.settings['window (pix)'] / 2)
+        self.initialize_settings()
 
         self.root = root
         self.root.title("Camera Control") 
@@ -40,10 +32,18 @@ class MainApp:
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Test", command=self.test)
 
+    def initialize_settings(self):
+        self.settings = {}
+        self.settings["roi_size (pix)"] = 50
+        self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
+        self.settings['selected'] = 0
+        
+        self.settings['camera (pix)'] = (1000, 1000)
+        self.settings['fov (pix)'] = np.asarray(((0,0) ,self.settings['camera (pix)']))
+        self.settings['window (pix)'] = 1000
 
     def start_camera(self):
         self.camera = CameraApplication(settings=self.settings)
-        # self.camera = CameraApplication()
         threading.Thread(target=self.camera.run).start()
 
     def stop_camera(self):

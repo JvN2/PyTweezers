@@ -90,8 +90,6 @@ class FrameProducer(threading.Thread):
     def setup_camera(self):
         set_nearest_value(self.cam, "Height", self.settings.get("height (pix)", 400))
         set_nearest_value(self.cam, "Width", self.settings.get("width (pix)", 400))
-        # set_nearest_value(self.cam, "Height", 600)
-        # set_nearest_value(self.cam, "Width", 600)
         self.cam.set_pixel_format(PixelFormat.Mono8)
 
     def run(self, settings=None):
