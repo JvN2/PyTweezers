@@ -13,7 +13,7 @@ class MainApp:
         self.initialize_settings()
 
         self.root = root
-        self.root.title("Camera Control") 
+        self.root.title("Camera Control")
 
         self.dummy_camera = DummyCamera.CameraApplication(dummy=True)
 
@@ -36,11 +36,13 @@ class MainApp:
         self.settings = {}
         self.settings["roi_size (pix)"] = 50
         self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
-        self.settings['selected'] = 0
-        
-        self.settings['camera (pix)'] = (1000, 1000)
-        self.settings['fov (pix)'] = np.asarray(((0,0) ,self.settings['camera (pix)']))
-        self.settings['window (pix)'] = 1000
+        self.settings["selected"] = 0
+
+        self.settings["camera (pix)"] = (512, 512)
+        self.settings["fov (pix)"] = np.asarray(
+            ((0, 0), np.asarray(self.settings["camera (pix)"]) - 1)
+        )
+        self.settings["window (pix)"] = 500
 
     def start_camera(self):
         self.camera = CameraApplication(settings=self.settings)
@@ -58,8 +60,6 @@ class MainApp:
 
     def test(self):
         print("Test")
-
-
 
 
 if __name__ == "__main__":

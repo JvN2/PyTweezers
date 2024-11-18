@@ -3,8 +3,53 @@ import cv2
 import numpy as np
 from time import sleep
 from vmbpy import *
+from icecream import ic
+from typing import Tuple, Optional
 
 FRAME_QUEUE_SIZE = 10
+
+
+def update_fov(
+    fov: np.ndarray,
+    center: Optional[np.ndarray] = None,
+    zoom: float = 1,
+    camera: Tuple[int, int] = (1000, 1000),
+) -> np.ndarray:
+
+    fov = np.asarray(fov).astype(int)
+    camera = np.asarray(camera).astype(int)
+
+    if center is None:
+        center = np.sum(fov, axis=0) // 2
+    else:
+        center = np.asarray(center).astype(int)
+
+    # Calculate the new half-width and half-height based on the zoom factor
+    half_size = ((fov[1] - fov[0]) * zoom) // 2
+
+    # Calculate the new FOV coordinates
+    new_fov = np.array([center - half_size, center + half_size])
+
+    # Adjust FOV coordinates if they exceed the camera boundaries
+    if new_fov[0, 0] < 0:
+        new_fov[:, 0] -= new_fov[0, 0]
+    if new_fov[0, 1] < 0:
+        new_fov[:, 1] -= new_fov[0, 1]
+    if new_fov[1, 0] > camera[0]:
+        new_fov[:, 0] -= new_fov[1, 0] - camera[0]
+    if new_fov[1, 1] > camera[1]:
+        new_fov[:, 1] -= new_fov[1, 1] - camera[1]
+
+    # Ensure FOV is within camera boundaries
+    new_fov = np.clip(new_fov, 0, camera)
+    return new_fov
+
+def extract_fov(cv_image: np.ndarray, fov: np.ndarray) -> np.ndarray:
+    ic(cv_image, fov)
+    return cv_image[
+        fov[0][1] : fov[1][1],
+        fov[0][0] :fov[1][0],
+    ]
 
 
 def plot_rois(cv_frame: np.ndarray, settings=None) -> np.ndarray:
@@ -79,7 +124,10 @@ class FrameConsumer:
                 )
                 rois = extract_rois(cv_images, self.settings)
                 cv_images = plot_rois(cv_images, self.settings)
-                # cv_images = self._get_zoom(cv_images)
+                # ic(cv_images.shape)
+
+                self.settings["fov (pix)"] = self._extract_fov(cv_images)
+                # cv_images = self._magnify(cv_images)
                 cv2.imshow(IMAGE_CAPTION, cv_images)
                 cv2.namedWindow(IMAGE_CAPTION)
                 cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
@@ -92,36 +140,25 @@ class FrameConsumer:
     def stop(self):
         self.quit = True
 
-    def _update_fov(self, center=None, width=None):
-        if width is None:
-            width = min(self.settings["fov (pix)"][1] - self.settings["fov (pix)"][0])
-        half_width = min(width, *self.settings["camera (pix)"]) // 2
-        if center is None:
-            center = np.sum(self.settings["fov (pix)"], axis=1) // 2
-
-        # Calculate initial FOV coordinates
-        fov = np.array([center - half_width, center + half_width])
-
-        # Adjust FOV coordinates if they exceed the camera boundaries
-        if fov[0, 0] < 0:
-            fov[:, 0] -= fov[0, 0]
-        if fov[0, 1] < 0:
-            fov[:, 1] -= fov[0, 1]
-        if fov[1, 0] > self.settings["camera (pix)"][0]:
-            fov[:, 0] -= fov[1, 0] - self.settings["camera (pix)"][0]
-        if fov[1, 1] > self.settings["camera (pix)"][1]:
-            fov[:, 1] -= fov[1, 1] - self.settings["camera (pix)"][1]
-
-        # Ensure FOV is within camera boundaries
-        self.settings["fov (pix)"] = np.clip(fov, 0, self.settings["camera (pix)"])
-        return
-
-    def _get_zoom(self, cv_frame: np.ndarray) -> np.ndarray:
+    def _extract_fov(self, cv_frame: np.ndarray) -> np.ndarray:
         x0 = self.settings.get("fov (pix)", 0)[0][0]
         x1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][0]
         y0 = self.settings.get("fov (pix)", 0)[0][1]
         y1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][1]
-        cv_frame = cv_frame[y0:y1, :, x0:x1, :]
+        # ic(x0, y0, x1, y1)
+        # new_cv_frame = cv_frame[y0:y1, :, x0:x1, :]
+        # ic(cv_frame.shape, new_cv_frame.shape)
+        return cv_frame
+
+    def _magnify(self, cv_frame: np.ndarray) -> np.ndarray:
+        cv_frame = cv2.resize(
+            cv_frame,
+            (
+                self.settings["window (pix)"],
+                self.settings["window (pix)"],
+            ),
+            interpolation=cv2.INTER_NEAREST,
+        )
         return cv_frame
 
     def _mouse_callback(self, event, x, y, flags, param):
@@ -153,13 +190,12 @@ class FrameConsumer:
                     self.settings["selected"] = max(0, self.settings["selected"] - 1)
                 else:
                     margin = roi_size // 2
-                    print(x,y)
+                    print(x, y)
                     if (margin < x < self.settings["camera (pix)"][0] - margin) & (
                         margin < y < self.settings["camera (pix)"][1] - margin
                     ):
                         self.settings["rois"].append([x, y])
                         self.settings["selected"] = len(self.settings["rois"]) - 1
-
 
         elif flags & cv2.EVENT_LBUTTONDOWN:
             # select roi
@@ -172,13 +208,24 @@ class FrameConsumer:
                 self.settings["selected"] = index[0]
 
         if event == cv2.EVENT_MOUSEWHEEL:
-            # zoom in or out
-            if flags > 0:
-                roi_size *= 1.3
-            else:
-                roi_size /= 1.3
-            self._update_fov(width=roi_size)
+            zoom = 1.25
+            if flags < 0:
+                zoom = 1 / zoom
+            self.settings["fov (pix)"] = update_fov(
+                self.settings["fov (pix)"],
+                center=[x, y],
+                zoom=zoom,
+                camera=self.settings["camera (pix)"],
+            )
 
 
 if __name__ == "__main__":
-    print("This is a module, not a standalone script.")
+    # print("This is a module, not a standalone script.")
+    fov=((0, 0), (1000, 1000))
+    fov = update_fov(
+        fov = fov, zoom=0.1, center=(10, 500), camera=(1000, 1000)
+    )
+    ic(fov)
+    image = np.zeros((1000, 1000))
+    image = extract_fov(image, fov)
+    ic(fov, image.shape)
