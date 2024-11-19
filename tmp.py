@@ -1,46 +1,36 @@
-import cv2
 import numpy as np
 
-import numpy as np
 
-def extract_square(image: np.ndarray, center: tuple, width: int) -> np.ndarray:
-    height, img_width = image.shape[:2]
+def get_subarray(array, center, width):
+    x_center, y_center = center
     half_width = width // 2
-    x, y = center
 
-    # Calculate the coordinates of the top-left and bottom-right corners
-    x0, x1 = x - half_width, x + half_width
-    y0, y1 = y - half_width, y + half_width
+    x_start = max(0, x_center - half_width)
+    y_start = max(0, y_center - half_width)
+    x_end = min(array.shape[0], x_center + half_width + 1)
+    y_end = min(array.shape[1], y_center + half_width + 1)
 
-    # Adjust the coordinates if they exceed the image boundaries
-    if x0 < 0:
-        x0 = 0
-        x1 = width
-    if x1 > img_width:
-        x1 = img_width
-        x0 = img_width - width
-    if y0 < 0:
-        y0 = 0
-        y1 = width
-    if y1 > height:
-        y1 = height
-        y0 = height - width
+    if x_start == 0:
+        x_end = min(array.shape[0], width)
+    elif x_end == array.shape[0]:
+        x_start = max(0, array.shape[0] - width)
 
-    # Ensure the coordinates are within the image boundaries
-    x0 = max(0, x0)
-    x1 = min(img_width, x1)
-    y0 = max(0, y0)
-    y1 = min(height, y1)
+    if y_start == 0:
+        y_end = min(array.shape[1], width)
+    elif y_end == array.shape[1]:
+        y_start = max(0, array.shape[1] - width)
 
-    # Extract the square region from the image
-    square = image[y0:y1, x0:x1]
+    return array[x_start:x_end, y_start:y_end], [
+        x_start + width // 2,
+        y_start + width // 2,
+    ]
 
-    return square, (x0, y0)
 
-# Example usage
-image = np.random.rand(1000, 1000, 3).astype(np.uint8)
-center = (0, 50000)
-width = 500
-square , offset= extract_square(image, center, width)
-print(square.shape, offset)
-
+# Example usage:
+array = np.random.rand(10, 10)
+array = np.array([[x for x in range(10)] for y in range(10)])
+center = (0, 100)
+width = 5
+subarray, center = get_subarray(array, center, width)
+print(subarray)
+print(center)
