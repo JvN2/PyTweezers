@@ -38,11 +38,16 @@ class MainApp:
         self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
         self.settings["selected"] = 0
 
-        self.settings["camera (pix)"] = (512, 512)
-        self.settings["fov (pix)"] = np.asarray(
-            ((0, 0), np.asarray(self.settings["camera (pix)"]) - 1)
-        )
-        self.settings["window (pix)"] = 500
+        self.settings["window (pix)"] = 800
+        self.settings["camera (pix)"] = np.asarray((1024, 1024))
+        self.settings["fov_size (pix)"] = min(self.settings["camera (pix)"])
+        self.settings["fov_center (pix)"] = self.settings["camera (pix)"] // 2
+
+        self.settings["frames"] = -1
+
+        self.settings['_filename'] = r'c:\tmp\image.bin'
+        self.settings['_aquisition mode'] = 'calibrate'
+
 
     def start_camera(self):
         self.camera = CameraApplication(settings=self.settings)

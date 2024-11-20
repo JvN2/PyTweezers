@@ -9,6 +9,51 @@ from typing import Tuple, Optional
 FRAME_QUEUE_SIZE = 10
 
 
+def get_subarray(array: np.ndarray, center: tuple, size: int) -> np.ndarray:
+    height, width = array.shape[:2]
+    half_size = size // 2
+    x, y = center
+
+    # Calculate the coordinates of the top-left and bottom-right corners
+    x0, x1 = x - half_size, x + half_size
+    y0, y1 = y - half_size, y + half_size
+
+    # Adjust the coordinates if they exceed the image boundaries
+    if x0 < 0:
+        x0 = 0
+        x1 = size
+    if x1 > width:
+        x1 = width
+        x0 = width - size
+    if y0 < 0:
+        y0 = 0
+        y1 = size
+    if y1 > height:
+        y1 = height
+        y0 = height - size
+
+    # Ensure the coordinates are within the image boundaries
+    x0 = max(0, x0)
+    x1 = min(width, x1)
+    y0 = max(0, y0)
+    y1 = min(height, y1)
+
+    # Extract the square sub-array from the image
+    if len(array.shape) == 3:
+        sub_array = array[y0:y1, x0:x1, :]
+    else:
+        sub_array = array[y0:y1, x0:x1]
+
+    return (
+        sub_array,
+        [
+            (x0 + x1) // 2,
+            (y0 + y1) // 2,
+        ],
+        x1 - x0,
+    )
+
+
 def update_fov(
     fov: np.ndarray,
     center: Optional[np.ndarray] = None,
@@ -44,24 +89,41 @@ def update_fov(
     new_fov = np.clip(new_fov, 0, camera)
     return new_fov
 
+
 def extract_fov(cv_image: np.ndarray, fov: np.ndarray) -> np.ndarray:
     ic(cv_image, fov)
     return cv_image[
         fov[0][1] : fov[1][1],
-        fov[0][0] :fov[1][0],
+        fov[0][0] : fov[1][0],
     ]
 
 
-def plot_rois(cv_frame: np.ndarray, settings=None) -> np.ndarray:
+def plot_rois(
+    cv_frame: np.ndarray, settings=None, fov=False, frame_nr=None
+) -> np.ndarray:
     cv_frame = cv2.cvtColor(cv_frame, cv2.COLOR_GRAY2RGB)
+    if fov:
+        roi_size = int(
+            settings["roi_size (pix)"]
+            * settings["window (pix)"]
+            / settings["fov_size (pix)"]
+        )
+    else:
+        roi_size = settings["roi_size (pix)"]
     for i, center in enumerate(settings.get("rois", [])):
+        if fov:
+            center = (np.array(center) - settings["fov_center (pix)"]) / settings[
+                "fov_size (pix)"
+            ]
+            center += 0.5
+            center = center * settings["window (pix)"]
+            center = center.astype(int)
+
         color = (0, 255, 255) if i == settings.get("selected", 0) else (255, 0, 0)
         cv2.rectangle(
             cv_frame,
-            np.asarray(center) - settings["roi_size (pix)"] // 2,
-            np.asarray(center)
-            - settings["roi_size (pix)"] // 2
-            + settings["roi_size (pix)"],
+            np.asarray(center) - roi_size // 2,
+            np.asarray(center) - roi_size // 2 + roi_size,
             color,
             1,
         )
@@ -69,14 +131,28 @@ def plot_rois(cv_frame: np.ndarray, settings=None) -> np.ndarray:
             cv_frame,
             f"{i}",
             [
-                center[0] - settings["roi_size (pix)"] // 2,
-                center[1] - 5 - settings["roi_size (pix)"] // 2,
+                center[0] - roi_size // 2,
+                center[1] - 5 - roi_size // 2,
             ],
             cv2.FONT_HERSHEY_COMPLEX_SMALL,
             1,
             color,
             1,
         )
+        if frame_nr:
+            cv2.putText(
+                cv_frame,
+                f"{frame_nr}",
+                [
+                    10,
+                    cv_frame.shape[1] - 10,
+                ],
+                cv2.FONT_HERSHEY_COMPLEX_SMALL,
+                1,
+                (255, 0, 0),
+                1,
+            )
+
     return cv_frame
 
 
@@ -94,10 +170,12 @@ class FrameConsumer:
         self.frame_queue = frame_queue
         self.quit = False
         self.settings = settings
+        self.frames = []
 
     def run(self):
         IMAGE_CAPTION = "MT camera"
         frames = {}
+        n_frames = 0
         alive = True
 
         while alive:
@@ -122,33 +200,50 @@ class FrameConsumer:
                     ],
                     axis=1,
                 )
-                rois = extract_rois(cv_images, self.settings)
-                cv_images = plot_rois(cv_images, self.settings)
-                # ic(cv_images.shape)
 
-                self.settings["fov (pix)"] = self._extract_fov(cv_images)
-                # cv_images = self._magnify(cv_images)
-                cv2.imshow(IMAGE_CAPTION, cv_images)
+                # Extract the FOV from the camera image and display it
+                (
+                    fov,
+                    self.settings["fov_center (pix)"],
+                    self.settings["fov_size (pix)"],
+                ) = get_subarray(
+                    cv_images,
+                    self.settings["rois"][self.settings["selected"]],
+                    self.settings["fov_size (pix)"],
+                )
+
+                fov = self._magnify(fov)
+                fov = plot_rois(fov, self.settings, fov=True, frame_nr=n_frames)
+
+                cv2.imshow(IMAGE_CAPTION, fov)
                 cv2.namedWindow(IMAGE_CAPTION)
                 cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
+
+                # extract selected roi and save it
+                if self.settings.get("_aquisition mode") == "calibrate":
+                    (roi, _, _) = get_subarray(
+                        cv_images,
+                        self.settings["rois"][self.settings["selected"]],
+                        self.settings["roi_size (pix)"],
+                    )
+                    self.frames.append(roi)
+
+                if n_frames >= self.settings["frames"]-1 and self.settings["frames"] > 0:
+                    self.quit = True
+
+                n_frames += 1
 
             cv2.waitKey(10)
             if self.quit:
                 cv2.destroyAllWindows()
                 alive = False
+                if len(self.frames):
+                    self.save_frames_to_binary_file(self.settings["_filename"])
+
 
     def stop(self):
         self.quit = True
 
-    def _extract_fov(self, cv_frame: np.ndarray) -> np.ndarray:
-        x0 = self.settings.get("fov (pix)", 0)[0][0]
-        x1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][0]
-        y0 = self.settings.get("fov (pix)", 0)[0][1]
-        y1 = self.settings.get("fov (pix)", self.settings["camera (pix)"])[1][1]
-        # ic(x0, y0, x1, y1)
-        # new_cv_frame = cv_frame[y0:y1, :, x0:x1, :]
-        # ic(cv_frame.shape, new_cv_frame.shape)
-        return cv_frame
 
     def _magnify(self, cv_frame: np.ndarray) -> np.ndarray:
         cv_frame = cv2.resize(
@@ -163,16 +258,17 @@ class FrameConsumer:
 
     def _mouse_callback(self, event, x, y, flags, param):
         x, y = (
-            int(
-                x / self.settings.get("zoom (pix)", 1)
-                + self.settings.get("offset (pix)", [0, 0])[0]
-            ),
-            int(
-                y / self.settings.get("zoom (pix)", 1)
-                + self.settings.get("offset (pix)", [0, 0])[1]
-            ),
-        )
+            (np.array([x, y]) / self.settings["window (pix)"] - 0.5)
+            * self.settings["fov_size (pix)"]
+            + self.settings["fov_center (pix)"]
+        ).astype(int)
+
         roi_size = self.settings["roi_size (pix)"]
+        roi_size = int(
+            self.settings["roi_size (pix)"]
+            * self.settings["window (pix)"]
+            / self.settings["fov_size (pix)"]
+        )
 
         if flags & cv2.EVENT_FLAG_CTRLKEY:
             # add or remove roi
@@ -190,7 +286,6 @@ class FrameConsumer:
                     self.settings["selected"] = max(0, self.settings["selected"] - 1)
                 else:
                     margin = roi_size // 2
-                    print(x, y)
                     if (margin < x < self.settings["camera (pix)"][0] - margin) & (
                         margin < y < self.settings["camera (pix)"][1] - margin
                     ):
@@ -198,7 +293,7 @@ class FrameConsumer:
                         self.settings["selected"] = len(self.settings["rois"]) - 1
 
         elif flags & cv2.EVENT_LBUTTONDOWN:
-            # select roi
+
             dist = np.abs(
                 np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
             )
@@ -210,22 +305,36 @@ class FrameConsumer:
         if event == cv2.EVENT_MOUSEWHEEL:
             zoom = 1.25
             if flags < 0:
-                zoom = 1 / zoom
-            self.settings["fov (pix)"] = update_fov(
-                self.settings["fov (pix)"],
-                center=[x, y],
-                zoom=zoom,
-                camera=self.settings["camera (pix)"],
-            )
+                self.settings["fov_size (pix)"] = int(
+                    self.settings["fov_size (pix)"] * zoom
+                )
+            else:
+                self.settings["fov_size (pix)"] = max(
+                    int(self.settings["fov_size (pix)"] / zoom), 16
+                )
+
+    def save_frames_to_binary_file(self, filename: str):
+        with open(filename, "wb") as f:
+            for frame in self.frames:
+                frame.tofile(f)
+
+    def load_frames_from_binary_file(self, filename: str, shape: tuple, count: int):
+        frames = []
+        with open(filename, "rb") as f:
+            for _ in range(count):
+                frame = np.fromfile(f, dtype=np.uint8, count=np.prod(shape)).reshape(
+                    shape
+                )
+                frames.append(frame)
+        return frames
 
 
 if __name__ == "__main__":
     # print("This is a module, not a standalone script.")
-    fov=((0, 0), (1000, 1000))
-    fov = update_fov(
-        fov = fov, zoom=0.1, center=(10, 500), camera=(1000, 1000)
-    )
-    ic(fov)
-    image = np.zeros((1000, 1000))
-    image = extract_fov(image, fov)
-    ic(fov, image.shape)
+    array = np.array([[x for x in range(1000)] for y in range(1000)])
+    center = (500, 1500)
+    width = 10
+    (subarray, center, width) = get_subarray(array.T, center, width)
+    ic(subarray)
+    ic(center)
+    ic(width)
