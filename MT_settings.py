@@ -1,31 +1,34 @@
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import ttk  # Import ttk for combobox
 import numpy as np
 
 
 class SettingsEditor(tk.Toplevel):
-    def __init__(self, parent, settings):
+    def __init__(self, parent, settings, title=None):
         super().__init__(parent)
         self.settings = settings
         self.entries = {}
         self.sliders = {}
+        if title:
+            self.title(title)  # Set the title of the window
         self.create_widgets()
 
     def create_widgets(self):
         row = 0
         button_width = 10  # Set a fixed width for the buttons
-        for key, value in self.settings.items():
-            if isinstance(value, (int, float)):
+        entry_width = 20  # Set a fixed width for the entries and comboboxes
+        for key, values in self.settings.items():
+            if isinstance(values[0], (int, float)):
                 tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
-                entry = tk.Entry(self)
-                entry.insert(0, str(value))
+                entry = tk.Entry(self, width=entry_width)
+                entry.insert(0, str(values[0]))
                 entry.grid(row=row, column=1, padx=5, pady=5)
                 self.entries[key] = entry
 
                 # Define min, max, default values, and resolution for the slider
-                min_val, max_val, default_val, resolution, is_log = (
-                    self.get_slider_values(key, value)
-                )
+                min_val, max_val, resolution, par_type = values[1:5]
+
                 slider = tk.Scale(
                     self,
                     from_=min_val,
@@ -34,102 +37,104 @@ class SettingsEditor(tk.Toplevel):
                     resolution=resolution,
                     showvalue=0,
                 )
-                slider.set(self.to_slider_value(default_val, min_val, max_val, is_log))
+
+                if par_type == "linear":
+                    slider_value = values[0]
+                elif par_type == "2log":
+                    slider_value = np.log2(values[0])
+                elif par_type == "10log":
+                    slider_value = np.log10(values[0])
+                slider.set(slider_value)
                 slider.grid(row=row, column=2, padx=5, pady=5)
-                self.sliders[key] = (slider, is_log, min_val, max_val)
+                self.sliders[key] = (slider, par_type, min_val, max_val)
 
                 # Couple the entry and slider
                 entry.bind(
                     "<KeyRelease>",
-                    lambda event, k=key, e=entry, s=slider, is_log=is_log, min_val=min_val, max_val=max_val: self.update_slider_from_entry(
-                        k, e, s, is_log, min_val, max_val
+                    lambda event, k=key, e=entry, s=slider, par_type=par_type, min_val=min_val, max_val=max_val: self.update_slider_from_entry(
+                        k, e, s, par_type, min_val, max_val
                     ),
                 )
                 slider.bind(
                     "<Motion>",
-                    lambda event, k=key, e=entry, s=slider, is_log=is_log, min_val=min_val, max_val=max_val: self.update_entry_from_slider(
-                        k, e, s, is_log, min_val, max_val
+                    lambda event, k=key, e=entry, s=slider, par_type=par_type, min_val=min_val, max_val=max_val: self.update_entry_from_slider(
+                        k, e, s, par_type, min_val, max_val
                     ),
                 )
-
+                row += 1
+            elif isinstance(values[0], str):
+                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
+                var = tk.StringVar(self)
+                var.set(values[0])
+                combobox = ttk.Combobox(
+                    self, textvariable=var, values=values, width=entry_width - 3
+                )  # Adjust width to match entry
+                combobox.grid(row=row, column=1, padx=5, pady=5)
+                self.entries[key] = var
                 row += 1
 
         tk.Button(self, text="OK", command=self.on_ok, width=button_width).grid(
-            row=row, column=2, padx=5, pady=5
+            row=row, column=2, padx=15, pady=5
         )
         tk.Button(self, text="Cancel", command=self.on_cancel, width=button_width).grid(
-            row=row, column=0, padx=5, pady=5
+            row=row, column=0, padx=15, pady=5
         )
 
-    def get_slider_values(self, key, value):
-        # Define min, max, default values, resolution, and whether to use logarithmic scale
-        if key == "roi_size (pix)":
-            return 10, 100, value, 1, False
-        elif key == "frames":
-            return 1, 1000, value, 1, False
-        elif key == "window (pix)":
-            return 100, 2000, value, 10, False
-        elif key == "fov_size (pix)":
-            return 100, 2000, value, 10, False
-        elif key == "some_float":
-            return 0.1, 100.0, value, 0.01, True  # Example of a logarithmic scale
-        else:
-            return 0, 1000, value, 1, False
-
-    def to_slider_value(self, value, min_val, max_val, is_log):
-        if is_log:
-            return (
-                np.log10(value / min_val)
-                / np.log10(max_val / min_val)
-                * (max_val - min_val)
-                + min_val
-            )
+    def to_slider_value(self, value, min_val, max_val, par_type):
+        if par_type == "2log":
+            return np.log2(value)
+        elif par_type == "10log":
+            return np.log10(value)
         return value
 
-    def from_slider_value(self, slider_value, min_val, max_val, is_log):
-        if is_log:
-            return min_val * 10 ** (
-                (slider_value - min_val)
-                / (max_val - min_val)
-                * np.log10(max_val / min_val)
-            )
+    def from_slider_value(self, slider_value, min_val, max_val, par_type):
+        if par_type == "2log":
+            return 2**slider_value
+        elif par_type == "10log":
+            return 10**slider_value
         return slider_value
 
-    def update_slider_from_entry(self, key, entry, slider, is_log, min_val, max_val):
+    def update_slider_from_entry(self, key, entry, slider, par_type, min_val, max_val):
         try:
             value = float(entry.get())
-            slider.set(self.to_slider_value(value, min_val, max_val, is_log))
+            slider.set(self.to_slider_value(value, min_val, max_val, par_type))
         except ValueError:
             pass
 
-    def update_entry_from_slider(self, key, entry, slider, is_log, min_val, max_val):
-        value = self.from_slider_value(slider.get(), min_val, max_val, is_log)
+    def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
+        value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
         entry.delete(0, tk.END)
         entry.insert(0, str(value))
 
     def on_ok(self):
         for key, entry in self.entries.items():
-            value = entry.get()
-            if value.isdigit():
-                self.settings[key] = int(value)
+            if isinstance(entry, tk.StringVar):
+                self.settings[key] = entry.get()
             else:
-                try:
-                    self.settings[key] = float(value)
-                except ValueError:
-                    messagebox.showerror(
-                        "Invalid input", f"Invalid value for {key}: {value}"
-                    )
-                    return
+                value = entry.get()
+                if value.isdigit():
+                    self.settings[key] = int(value)
+                else:
+                    try:
+                        self.settings[key] = float(value)
+                    except ValueError:
+                        messagebox.showerror(
+                            "Invalid input", f"Invalid value for {key}: {value}"
+                        )
+                        return
 
-            # Update the entry with the slider value
-            slider, is_log, min_val, max_val = self.sliders[key]
-            slider_value = self.from_slider_value(
-                slider.get(), min_val, max_val, is_log
-            )
-            entry.delete(0, tk.END)
-            entry.insert(0, str(slider_value))
-            self.settings[key] = slider_value
+                # Update the entry with the slider value
+                slider, par_type, min_val, max_val = self.sliders[key]
+                slider_value = self.from_slider_value(
+                    slider.get(), min_val, max_val, par_type
+                )
+                entry.delete(0, tk.END)
+                entry.insert(0, str(slider_value))
+                self.settings[key] = slider_value
 
+        self.master.settings = (
+            self.settings
+        )  # Return the new settings to the main function
         self.destroy()
 
     def on_cancel(self):
@@ -139,12 +144,20 @@ class SettingsEditor(tk.Toplevel):
 # Example usage
 if __name__ == "__main__":
     root = tk.Tk()
+    root.settings = {}  # Initialize root.settings
     settings = {
-        "roi_size (pix)": 50,
-        "frames": 200,
-        "window (pix)": 800,
-        "fov_size (pix)": 400,
-        "some_float": 1.23,
+        "roi_size (pix)": (64, 2, 8, 1, "2log"),
+        "frames": (100, 0, 4, 1, "10log"),
+        "window (pix)": (1024, 7, 10, 1, "2log"),
+        "fov_size (pix)": (50, 0, 100, 10, "Linear"),
+        "some_float": (50, 0, 3, 1, "10log"),
+        "some string": ("hello", "10log", "else"),
     }
-    editor = SettingsEditor(root, settings)
+    title = "Adjust settings ..."
+    editor = SettingsEditor(root, settings, title)
+    root.wait_window(editor)  # Wait for the settings editor to close
+    for key, value in root.settings.items():
+        print(f"{key}: {value}")  # Print the updated settings
     root.mainloop()
+    # for key, value in root.settings.items():
+    #     print(f"{key}: {value}")  # Print the updated settings
