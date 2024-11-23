@@ -1,7 +1,9 @@
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk  # Import ttk for combobox
+from tkinter import filedialog  # Import filedialog for file selection
 import numpy as np
+from pathlib import Path
 
 
 class SettingsEditor(tk.Toplevel):
@@ -69,9 +71,25 @@ class SettingsEditor(tk.Toplevel):
                 combobox = ttk.Combobox(
                     self, textvariable=var, values=values, width=entry_width - 3
                 )  # Adjust width to match entry
-                combobox.grid(row=row, column=1, padx=5, pady=5)
+                combobox.grid(
+                    row=row, column=1, columnspan=2, padx=5, pady=5, sticky="w"
+                )
                 self.entries[key] = var
                 row += 1
+            elif isinstance(values[0], Path):
+                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
+                var = tk.StringVar(self)
+                var.set(values[0])
+                combobox = ttk.Combobox(
+                    self, textvariable=var, values=values[1:], width=entry_width - 3
+                )  # Adjust width to match entry
+                combobox.grid(
+                    row=row, column=1, columnspan=2, padx=5, pady=5, sticky="we"
+                )
+                combobox.bind("<<ComboboxSelected>>", self.open_file_dialog)
+                self.entries[key] = var
+                row += 1
+                print(values[0])
 
         tk.Button(self, text="OK", command=self.on_ok, width=button_width).grid(
             row=row, column=2, padx=15, pady=5
@@ -79,6 +97,14 @@ class SettingsEditor(tk.Toplevel):
         tk.Button(self, text="Cancel", command=self.on_cancel, width=button_width).grid(
             row=row, column=0, padx=15, pady=5
         )
+
+    def open_file_dialog(self, event):
+        selected_extension = event.widget.get()
+        file_path = filedialog.askopenfilename(
+            filetypes=[(selected_extension, selected_extension)]
+        )
+        if file_path:
+            event.widget.set(file_path)
 
     def to_slider_value(self, value, min_val, max_val, par_type):
         if par_type == "2log":
@@ -152,6 +178,7 @@ if __name__ == "__main__":
         "fov_size (pix)": (50, 0, 100, 10, "Linear"),
         "some_float": (50, 0, 3, 1, "10log"),
         "some string": ("hello", "10log", "else"),
+        "File": (Path("c:/tmp/image.bin"), "*.bin", "*.hdf"),
     }
     title = "Adjust settings ..."
     editor = SettingsEditor(root, settings, title)
