@@ -180,6 +180,13 @@ if __name__ == "__main__":
         "some string": ("hello", "10log", "else"),
         "File": (Path("c:/tmp/image.bin"), "*.bin", "*.hdf"),
     }
+
+    settings = {
+        "axis" : ("X", "Y", "Z"),
+        "target (mm)": (1, 0, 10, 0.1, "linear"),
+    }
+    print(settings)
+
     title = "Adjust settings ..."
     editor = SettingsEditor(root, settings, title)
     root.wait_window(editor)  # Wait for the settings editor to close
