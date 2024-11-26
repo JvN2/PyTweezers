@@ -22,7 +22,8 @@ class SettingsEditor(tk.Toplevel):
         entry_width = 20  # Set a fixed width for the entries and comboboxes
         for key, values in self.settings.items():
             if isinstance(values[0], (int, float)):
-                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(
+                    row=row, column=0, padx=5, pady=5)
                 entry = tk.Entry(self, width=entry_width)
                 entry.insert(0, str(values[0]))
                 entry.grid(row=row, column=1, padx=5, pady=5)
@@ -65,7 +66,8 @@ class SettingsEditor(tk.Toplevel):
                 )
                 row += 1
             elif isinstance(values[0], str):
-                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(
+                    row=row, column=0, padx=5, pady=5)
                 var = tk.StringVar(self)
                 var.set(values[0])
                 combobox = ttk.Combobox(
@@ -77,7 +79,8 @@ class SettingsEditor(tk.Toplevel):
                 self.entries[key] = var
                 row += 1
             elif isinstance(values[0], Path):
-                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(
+                    row=row, column=0, padx=5, pady=5)
                 var = tk.StringVar(self)
                 var.set(values[0])
                 combobox = ttk.Combobox(
@@ -128,7 +131,8 @@ class SettingsEditor(tk.Toplevel):
             pass
 
     def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
-        value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
+        value = self.from_slider_value(
+            slider.get(), min_val, max_val, par_type)
         entry.delete(0, tk.END)
         entry.insert(0, str(value))
 
@@ -182,8 +186,8 @@ if __name__ == "__main__":
     }
 
     settings = {
-        "axis" : ("X", "Y", "Z"),
-        "target (mm)": (1, 0, 10, 0.1, "linear"),
+        "axis": ("X (mm)", "Y (mm)", "Z (mm)"),
+        "target": (1, 0, 10, 0.1, "linear"),
     }
     print(settings)
 

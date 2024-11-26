@@ -28,17 +28,34 @@ class StepperApplication:
         for gcode in gcodes:
             self.send_gcode(gcode)
 
+    def read_response(self):
+        while self.running:
+            if self.serial_connection and self.serial_connection.in_waiting > 0:
+                response = self.serial_connection.readline().decode('utf-8').strip()
+                if response[:4] == 'log:':
+                    print(f"Log: {response[4:]}")
+
+
     def run(self):
         self.running = True
         self.connect()
+        threading.Thread(target=self.read_response).start()
         if self.running:
             # Example G-code commands
             gcodes = [
                 "G28 X",  # Home all axes
+                "G93 S0.1"
                 "G1 X1 F30",  # Move to position
                 "M400",
                 "G4 S1",
+                "G1 X0 F30",
+                "G4 S2",
+                "G1 X2 F30",  # Move to position
+                "M400",
+                "G4 S1",
                 "G1 X0 F30"
+                "M400"
+                "G93 0"
             ]
             self.send_gcodes(gcodes)
             print("Completed sending G-code commands")
