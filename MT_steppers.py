@@ -4,8 +4,9 @@ import threading
 import serial
 import time
 import pandas as pd
-import matplotlib.pyplot as plt
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 
 class StepperApplication:
     def __init__(self, port, baudrate=115200):
@@ -13,7 +14,7 @@ class StepperApplication:
         self.baudrate = baudrate
         self.serial_connection = None
         self.running = False
-        self.df = None
+        self.df = pd.DataFrame()
 
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
@@ -33,20 +34,19 @@ class StepperApplication:
             self.send_gcode(gcode)
 
     def read_response(self):
-        positions = []
         while self.running:
             if self.serial_connection and self.serial_connection.in_waiting > 0:
                 response = self.serial_connection.readline().decode('utf-8').strip()
                 if response[:4] == 'log:':
-                    positions.append(response[4:].split())
+                    data = response[4:].split()
+                    try:
+                        data = [float(x) for x in data]
+                        self.df.loc[data[0]] = data[1:] 
+                    except:
+                        self.df = pd.DataFrame(columns=data)
+                        self.df.set_index(self.df.columns[0], inplace=True)
                 if 'Stopped logging' in response:
                     self.running = False
-                    df = pd.DataFrame(positions[1:], columns=positions[0])
-                    df = df.astype(float)
-                    df.set_index(df.columns[0], inplace=True)
-                    self.df = df
-
-
 
     def run(self, gcodes):
         self.running = True
@@ -55,35 +55,51 @@ class StepperApplication:
         if self.running:
             self.send_gcodes(gcodes)
 
-
     def stop(self):
         self.running = False
         self.disconnect()
 
+def update_plot(frame, stepper_app, lines):
+    if not stepper_app.df.empty:
+        for line, column in zip(lines, stepper_app.df.columns):
+            line.set_data(stepper_app.df.index, stepper_app.df[column])
+        plt.gca().relim()
+        plt.gca().autoscale_view()
+    return lines
+
+def on_close(event, stepper_app):
+    stepper_app.stop()
+    plt.close('all')
+    print('Plot closed and application stopped.')
+
 if __name__ == "__main__":
     stepper_app = StepperApplication(port='COM3')
 
-        # Example G-code commands
+    # Example G-code commands
     gcodes = [
-        # "G28 X",  # Home all axes
-        "G93 S0.1",
-        "G4 S1"]
-    for i in np.linspace(0, 1  , 100):
-        gcodes.append(f"G1 X{i:3.3f} F{0.5*(i+1)**6:3.3f}")
-    gcodes += [
+        "G93 S0.01",
         "G4 S1",
-        "G1 X0 F20",  # Move to position
+        "G1 Y0.1 F30",
+        "G1 X0.25 F30",
         "G4 S1",
+        "G1 X0 F10",
+        "G4 S0.4",
+        "G1 Y0.0 F10",
+        "G4 S0.4",
         "G94"
     ]
+    print(gcodes)
 
-    for g in gcodes:
-        if "G1" in g:
-            print(g)
-
-
+    # Start the stepper application with the G-code commands
     threading.Thread(target=stepper_app.run, args=(gcodes,)).start()
-    while stepper_app.df is None:
-        time.sleep(0.5)
-    plt.plot(stepper_app.df['X'])
+
+    # Set up the plot
+    fig, ax = plt.subplots()
+    lines = [ax.plot([], [], label=col)[0] for col in ["X", "Y", "Z", "A", "B"]]  # Adjust columns as needed
+    ax.legend()
+    ani = FuncAnimation(fig, update_plot, fargs=(stepper_app, lines), interval=100, cache_frame_data=False)
+
+    # Connect the close event to the on_close function
+    fig.canvas.mpl_connect('close_event', lambda event: on_close(event, stepper_app))
+
     plt.show()
