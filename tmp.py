@@ -4,7 +4,12 @@ import matplotlib.pyplot as plt
 from icecream import ic
 
 
-def convert_to_section(x0, xe, v0, v, ve, t0=0, dt=0.01, a=10):
+def convert_to_section(x0, xe, v=30, t0=0, v0=0, ve=0, dt=0.01, a=10, vmax=30):
+
+    v = min(v, vmax)
+    v0 = min(v0, vmax)
+    ve = min(ve, vmax)
+
     if np.sign(v0) != np.sign(ve):
         ve = 0
     v = np.sign(xe - x0) * abs(v)
@@ -96,7 +101,7 @@ if __name__ == "__main__":
 
     # convert_to_profile(gcodes)
     plt.plot(
-        convert_to_section(2, -3, 0, 10, 0, t0=10),
+        convert_to_section(20, -40, 10, t0=100),
         marker="o",
         fillstyle="none",
     )
