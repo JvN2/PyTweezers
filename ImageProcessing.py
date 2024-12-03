@@ -228,7 +228,10 @@ class FrameConsumer:
                     )
                     self.frames.append(roi)
 
-                if n_frames >= self.settings["frames"]-1 and self.settings["frames"] > 0:
+                if (
+                    n_frames >= self.settings["frames"] - 1
+                    and self.settings["frames"] != 0
+                ):
                     self.quit = True
 
                 n_frames += 1
@@ -240,10 +243,8 @@ class FrameConsumer:
                 if len(self.frames):
                     self.save_frames_to_binary_file(self.settings["_filename"])
 
-
     def stop(self):
         self.quit = True
-
 
     def _magnify(self, cv_frame: np.ndarray) -> np.ndarray:
         cv_frame = cv2.resize(

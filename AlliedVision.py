@@ -74,8 +74,6 @@ class FrameProducer(threading.Thread):
         self.frame_queue = frame_queue
         self.killswitch = threading.Event()
         self.settings = settings
-        # for s in self.settings.keys():
-        #     print(s, self.settings[s])
 
     def __call__(self, cam: Camera, stream: Stream, frame: Frame):
         if frame.get_status() == FrameStatus.Complete:
@@ -119,11 +117,12 @@ class CameraApplication:
         self.settings = settings
         self.consumer = FrameConsumer(self.frame_queue, self.settings)
 
-
     def __call__(self, cam: Camera, event: CameraEvent):
         if event == CameraEvent.Detected:
             with self.producers_lock:
-                self.producers[cam.get_id()] = FrameProducer(cam, self.frame_queue, self.settings)
+                self.producers[cam.get_id()] = FrameProducer(
+                    cam, self.frame_queue, self.settings
+                )
                 self.producers[cam.get_id()].start()
         elif event == CameraEvent.Missing:
             with self.producers_lock:
@@ -140,7 +139,9 @@ class CameraApplication:
 
         with vmb:
             for cam in vmb.get_all_cameras():
-                self.producers[cam.get_id()] = FrameProducer(cam, self.frame_queue, self.settings)
+                self.producers[cam.get_id()] = FrameProducer(
+                    cam, self.frame_queue, self.settings
+                )
 
             with self.producers_lock:
                 for producer in self.producers.values():
@@ -170,9 +171,9 @@ class CameraApplication:
 if __name__ == "__main__":
     print_preamble()
     settings = {"roi_size (pix)": 50, "rois": [(50, 50), (100, 200), (198, 350)]}
-    settings['height (pix)'] = 400
-    settings['width (pix)'] = 400
-    settings['zoom'] = 2
+    settings["height (pix)"] = 400
+    settings["width (pix)"] = 400
+    settings["zoom"] = 2
     app = CameraApplication(settings)
     threading.Thread(target=app.run).start()
     sleep(2)

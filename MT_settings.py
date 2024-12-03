@@ -12,8 +12,10 @@ class SettingsEditor(tk.Toplevel):
         self.settings = settings
         self.entries = {}
         self.sliders = {}
-        if title:
-            self.title(title)  # Set the title of the window
+
+        self.title(title)
+        self.transient(parent)  # Set to be on of the main window
+        self.grab_set()  # Make the window modal
         self.create_widgets()
 
     def create_widgets(self):
@@ -22,8 +24,7 @@ class SettingsEditor(tk.Toplevel):
         entry_width = 20  # Set a fixed width for the entries and comboboxes
         for key, values in self.settings.items():
             if isinstance(values[0], (int, float)):
-                tk.Label(self, text=key).grid(
-                    row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
                 entry = tk.Entry(self, width=entry_width)
                 entry.insert(0, str(values[0]))
                 entry.grid(row=row, column=1, padx=5, pady=5)
@@ -66,8 +67,7 @@ class SettingsEditor(tk.Toplevel):
                 )
                 row += 1
             elif isinstance(values[0], str):
-                tk.Label(self, text=key).grid(
-                    row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
                 var = tk.StringVar(self)
                 var.set(values[0])
                 combobox = ttk.Combobox(
@@ -79,8 +79,7 @@ class SettingsEditor(tk.Toplevel):
                 self.entries[key] = var
                 row += 1
             elif isinstance(values[0], Path):
-                tk.Label(self, text=key).grid(
-                    row=row, column=0, padx=5, pady=5)
+                tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
                 var = tk.StringVar(self)
                 var.set(values[0])
                 combobox = ttk.Combobox(
@@ -131,8 +130,7 @@ class SettingsEditor(tk.Toplevel):
             pass
 
     def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
-        value = self.from_slider_value(
-            slider.get(), min_val, max_val, par_type)
+        value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
         entry.delete(0, tk.END)
         entry.insert(0, str(value))
 
@@ -171,10 +169,38 @@ class SettingsEditor(tk.Toplevel):
         self.destroy()
 
 
+class MainApp:
+    def __init__(self, root):
+        self.root = root
+        self.settings = {"example_setting": "default_value"}
+        self.create_widgets()
+
+    def create_widgets(self):
+        button = tk.Button(
+            self.root, text="Change Settings", command=self.change_settings
+        )
+        button.pack()
+
+    def change_settings(self):
+        settings = {"example_setting": self.settings["example_setting"]}
+
+        title = "Adjust settings ..."
+        settings_editor = SettingsEditor(self.root, settings, title)
+        self.root.wait_window(
+            settings_editor
+        )  # Wait until the SettingsEditor window is closed
+
+        if settings_editor.settings:
+            for key, value in settings_editor.settings.items():
+                self.settings[key] = value
+
+
 # Example usage
 if __name__ == "__main__":
+
     root = tk.Tk()
     root.settings = {}  # Initialize root.settings
+    root.title("Settings Editor")
     settings = {
         "roi_size (pix)": (64, 2, 8, 1, "2log"),
         "frames": (100, 0, 4, 1, "10log"),
@@ -196,6 +222,6 @@ if __name__ == "__main__":
     root.wait_window(editor)  # Wait for the settings editor to close
     for key, value in root.settings.items():
         print(f"{key}: {value}")  # Print the updated settings
-    root.mainloop()
+    # root.mainloop()
     # for key, value in root.settings.items():
     #     print(f"{key}: {value}")  # Print the updated settings
