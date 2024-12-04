@@ -45,7 +45,9 @@ class MainApp:
         self.initialize_settings()
 
         self.root = root
-        self.root.title("Camera Control")
+        self.root.geometry("400x200")
+        self.root.title("Magnetic Tweezers")
+        self.root.iconbitmap("MagnetIcon.ico")
 
         self.dummy_camera = DummyCamera.CameraApplication(dummy=True)
 
@@ -53,22 +55,20 @@ class MainApp:
         root.config(menu=menubar)
 
         file_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Exit", command=self.exit_application)
+        menubar.add_cascade(label="File", menu=file_menu)
 
         measure_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Measure", menu=measure_menu)
         measure_menu.add_command(label="Change settings", command=self.change_settings)
         measure_menu.add_separator()
         measure_menu.add_command(label="Stop", command=self.stop_camera)
         measure_menu.add_command(label="Start", command=self.start_camera)
-
-        # measure_menu.add_command(label="Test", command=self.test)
+        menubar.add_cascade(label="Measure", menu=measure_menu)
 
         help_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Help", menu=help_menu)
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Test", command=self.test)
+        menubar.add_cascade(label="Help", menu=help_menu)
 
     def initialize_settings(self):
         self.settings = {}
@@ -116,7 +116,9 @@ class MainApp:
                 self.settings[key] = value
 
     def show_about(self):
-        messagebox.showinfo("About", "Camera Control Application")
+        messagebox.showinfo(
+            "About", "Camera Control Application v0.1\n(c) 2024 by John van Noort"
+        )
 
     def test(self):
         print("Test")

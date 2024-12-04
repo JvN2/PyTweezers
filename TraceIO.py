@@ -610,22 +610,23 @@ class hdf_data(object):
                     for channel in self.shared_tracenames
                     if channel in self.traces.columns
                 ]
-                hdf5_file.create_table(
-                    rf"/",
-                    self.label,
-                    obj=self.traces.drop(columns=shared_tracenames).to_records(
-                        index=False
-                    ),
-                )
-                try:
-                    hdf5_file.remove_node(rf"/ shared", recursive=True)
-                except tables.NoSuchNodeError:
-                    pass
-                hdf5_file.create_table(
-                    rf"/",
-                    " shared",
-                    obj=self.traces[shared_tracenames].to_records(index=False),
-                )
+                if shared_tracenames:
+                    hdf5_file.create_table(
+                        rf"/",
+                        self.label,
+                        obj=self.traces.drop(columns=shared_tracenames).to_records(
+                            index=False
+                        ),
+                    )
+                    try:
+                        hdf5_file.remove_node(rf"/ shared", recursive=True)
+                    except tables.NoSuchNodeError:
+                        pass
+                    hdf5_file.create_table(
+                        rf"/",
+                        " shared",
+                        obj=self.traces[shared_tracenames].to_records(index=False),
+                    )
             if parameters and not self.parameters.empty:
                 df = self.parameters.copy().astype(float)
                 df[" label"] = df.index.values.astype("bytes")
