@@ -11,6 +11,7 @@ from pathlib import Path
 from AlliedVision import CameraApplication
 import DummyCamera
 from MT_settings import SettingsEditor
+import TraceIO
 
 
 def increment_filename(old_filename=None, base_dir=None):
@@ -119,6 +120,10 @@ class MainApp:
 
     def test(self):
         print("Test")
+        data = TraceIO.hdf_data(filename=self.settings["_filename"].with_suffix(".hdf"))
+        data.settings = self.settings
+        data.save(settings=True)
+        ic(data.filename)
 
 
 if __name__ == "__main__":

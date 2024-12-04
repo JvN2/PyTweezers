@@ -61,14 +61,18 @@ def convert_to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"]):
         if gcode[0] == "G93":
             df.loc[0] = np.zeros(len(df.columns))
             dt = float(gcode[1][1:])
-        # elif gcode[0] == 'G1' and dt:
-        #     axis = gcode[1][0]
-        #     position = float(gcode[1][1:])
-        #     velocity = float(gcode[2][1:])
-        #     df.loc[len(df), axis] = position
-        #     df.loc[len(df)-1, 'v_' + axis] = velocity
+        elif gcode[0] == "G1" and dt:
+            axis = gcode[1][0]
+            position = float(gcode[1][1:])
+            df.loc[len(df), axis] = position
+            try:
+                velocity = float(gcode[2][1:])
+            except IndexError:
+                velocity = 1000
+            df.loc[len(df) - 1, "v_" + axis] = velocity
         elif gcode[0] == "G4" and dt:
             values = df.iloc[-1].values.copy()
+            values[-len(axes) // 2 :] = np.nan
             if gcode[1][0] == "S":
                 values[0] += float(gcode[1][1:])
             elif gcode[1][0] == "M":
@@ -80,7 +84,7 @@ def convert_to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"]):
         :, df.columns.str.startswith("v_")
     ].fillna(0)
 
-    df.set_index("t", inplace=True)
+    # df.set_index("t", inplace=True)
     print(df)
     return df
 
@@ -90,7 +94,7 @@ if __name__ == "__main__":
         "G93 S0.01",
         "G4 M500",
         "G1 Y0.1 F30",
-        "G1 X0.25 F30",
+        "G1 X0.25",
         "G4 S1",
         # "G1 X0 F10",
         # "G4 S0.4",
@@ -99,10 +103,10 @@ if __name__ == "__main__":
         "G94",
     ]
 
-    # convert_to_profile(gcodes)
-    plt.plot(
-        convert_to_section(20, -40, 10, t0=100),
-        marker="o",
-        fillstyle="none",
-    )
-    plt.show()
+    convert_to_profile(gcodes)
+    # plt.plot(
+    #     convert_to_section(20, -40, 10, t0=100),
+    #     marker="o",
+    #     fillstyle="none",
+    # )
+    # plt.show()

@@ -17,6 +17,15 @@ class SettingsEditor(tk.Toplevel):
         self.transient(parent)  # Set to be on of the main window
         self.grab_set()  # Make the window modal
         self.create_widgets()
+        self.center_window()
+
+    def center_window(self):
+        self.update_idletasks()
+        width = self.winfo_width()
+        height = self.winfo_height()
+        x = (self.winfo_screenwidth() // 2) - (width // 2)
+        y = (self.winfo_screenheight() // 2) - (height // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
 
     def create_widgets(self):
         row = 0
