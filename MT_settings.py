@@ -80,7 +80,7 @@ class SettingsEditor(tk.Toplevel):
                 var = tk.StringVar(self)
                 var.set(values[0])
                 combobox = ttk.Combobox(
-                    self, textvariable=var, values=values, width=entry_width - 3
+                    self, textvariable=var, values=values[1:], width=entry_width - 3
                 )  # Adjust width to match entry
                 combobox.grid(
                     row=row, column=1, columnspan=2, padx=5, pady=5, sticky="w"

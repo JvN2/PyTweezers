@@ -4,6 +4,7 @@ import threading
 from typing import Optional
 from time import sleep
 from ImageProcessing import FrameConsumer
+from icecream import ic
 
 import cv2
 import numpy
@@ -33,9 +34,11 @@ def add_camera_id(frame: Frame, cam_id: str) -> Frame:
     return frame
 
 
-def try_put_frame(q: queue.Queue, cam: Camera, frame: Optional[Frame]):
+def try_put_frame(
+    q: queue.Queue, cam: Camera, frame: Optional[Frame], digital_input_state=0
+):
     try:
-        q.put_nowait((cam.get_id(), frame))
+        q.put_nowait((cam.get_id(), frame, digital_input_state))
     except queue.Full:
         pass
 
@@ -79,7 +82,9 @@ class FrameProducer(threading.Thread):
         if frame.get_status() == FrameStatus.Complete:
             if not self.frame_queue.full():
                 frame_cpy = copy.deepcopy(frame)
-                try_put_frame(self.frame_queue, cam, frame_cpy)
+                digital_input = 0  # cam.get_feature_by_name("Line2")
+                digital_input_state = digital_input.get()
+                try_put_frame(self.frame_queue, cam, frame_cpy, digital_input_state)
         cam.queue_frame(frame)
 
     def stop(self):
@@ -94,6 +99,11 @@ class FrameProducer(threading.Thread):
         self.log.info("Thread 'FrameProducer({})' started.".format(self.cam.get_id()))
         try:
             with self.cam:
+                # for feat in self.cam.get_all_features():
+                #     try:
+                #         ic(feat.get_name())
+                #     except:
+                #         pass
                 self.setup_camera()
                 try:
                     self.cam.start_streaming(self)

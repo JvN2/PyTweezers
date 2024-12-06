@@ -182,7 +182,8 @@ class FrameConsumer:
             frames_left = self.frame_queue.qsize()
             while frames_left:
                 try:
-                    cam_id, frame = self.frame_queue.get_nowait()
+                    cam_id, frame, line2 = self.frame_queue.get_nowait()
+                    print((cam_id, frame, line2))
                 except queue.Empty:
                     break
 
