@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox
 import threading
-from time import sleep
 import numpy as np
 import os
 from datetime import datetime
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from AlliedVision import CameraApplication
 import DummyCamera
+
 from MT_settings import SettingsEditor
 from MT_steppers import to_gcode, StepperApplication
 import TraceIO
@@ -25,14 +25,15 @@ def increment_filename(old_filename=None, base_dir=None):
         current_file_nr = 0
 
     if not base_dir:
+        if os.path.exists("d:/"):
+            disk = "d"
+        else:
+            disk = "c"
         date = datetime.now().strftime("%Y%m%d")
-        base_dir = Path(f"d:/users/{os.getlogin()}/data/{date}")
-
+        base_dir = Path(f"{disk}:/users/{os.getlogin()}/data/{date}")
     base_dir.mkdir(parents=True, exist_ok=True)
-
     filename = base_dir / f"data_{current_file_nr:03d}.bin"
 
-    # check if file exists, otherwise increase number
     while filename.exists():
         current_file_nr += 1
         filename = base_dir / f"data_{current_file_nr:03d}.bin"
@@ -75,12 +76,16 @@ class MainApp:
         help_menu.add_command(label="Test", command=self.test)
         menubar.add_cascade(label="Help", menu=help_menu)
 
-        self.root.bind("<Alt-Up>", self.handle_keyboard)
-        self.root.bind("<Alt-Down>", self.handle_keyboard)
-        self.root.bind("<Alt-Left>", self.handle_keyboard)
-        self.root.bind("<Alt-Right>", self.handle_keyboard)
-        self.root.bind("<Alt-Prior>", self.handle_keyboard)
-        self.root.bind("<Alt-Next>", self.handle_keyboard)
+        key_combinations = [
+            "<Alt-Up>",
+            "<Alt-Down>",
+            "<Alt-Left>",
+            "<Alt-Right>",
+            "<Alt-Prior>",
+            "<Alt-Next>",
+        ]
+        for key in key_combinations:
+            self.root.bind(key, self.handle_keyboard)
 
     def initialize_settings(self):
         self.settings = {}
@@ -95,7 +100,7 @@ class MainApp:
 
         self.settings["frames"] = 0
 
-        self.settings["_filename"] = increment_filename()
+        # self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "calibrate"
         self.settings["_trajectory"] = None
 
@@ -117,7 +122,6 @@ class MainApp:
         settings = {
             "roi_size (pix)": (self.settings["roi_size (pix)"], 2, 8, 1, "2log"),
             "frames": (self.settings["frames"], 0, 4, 1, "10log"),
-            # "File": (Path("c:/tmp/image.bin"), "*.bin", "*.hdf"),
         }
 
         settings_editor = SettingsEditor(self.root, settings, "Adjust settings ...")
@@ -167,7 +171,27 @@ class MainApp:
             messagebox.showinfo("Error", "No trajectory defined")
 
     def handle_keyboard(self, event):
-        print("keyboard", event.keysym)
+        step_size = 1
+        if event.state & 0x0001:
+            step_size *= 10
+        if event.state & 0x0004:
+            step_size *= 0.1
+
+        gcodes = ["G91"]
+        if event.keysym == "Up":
+            gcodes.append(f"G1 Y{step_size:.3f} F1000")
+        elif event.keysym == "Down":
+            gcodes.append(f"G1 Y{-step_size:.3f} F1000")
+        elif event.keysym == "Left":
+            gcodes.append(f"G1 X{-step_size:.3f} F1000")
+        elif event.keysym == "Right":
+            gcodes.append(f"G1 X{step_size:.3f} F1000")
+        elif event.keysym == "Prior":
+            gcodes.append(f"G1 Z{step_size:.3f} F1000")
+        elif event.keysym == "Next":
+            gcodes.append(f"G1 Z{-step_size:.3f} F1000")
+        gcodes.append("G90")
+        ic(gcodes)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 import queue
 import cv2
 import numpy as np
-from time import sleep
-from vmbpy import *
+
+# from vmbpy import *
 from icecream import ic
 from typing import Tuple, Optional
 
