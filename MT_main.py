@@ -75,6 +75,13 @@ class MainApp:
         help_menu.add_command(label="Test", command=self.test)
         menubar.add_cascade(label="Help", menu=help_menu)
 
+        self.root.bind("<Alt-Up>", self.handle_keyboard)
+        self.root.bind("<Alt-Down>", self.handle_keyboard)
+        self.root.bind("<Alt-Left>", self.handle_keyboard)
+        self.root.bind("<Alt-Right>", self.handle_keyboard)
+        self.root.bind("<Alt-Prior>", self.handle_keyboard)
+        self.root.bind("<Alt-Next>", self.handle_keyboard)
+
     def initialize_settings(self):
         self.settings = {}
         self.settings["roi_size (pix)"] = 50
@@ -158,6 +165,9 @@ class MainApp:
             threading.Thread(target=self.stepper_app.run, args=(gcode,)).start()
         else:
             messagebox.showinfo("Error", "No trajectory defined")
+
+    def handle_keyboard(self, event):
+        print("keyboard", event.keysym)
 
 
 if __name__ == "__main__":

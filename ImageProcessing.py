@@ -99,7 +99,7 @@ def extract_fov(cv_image: np.ndarray, fov: np.ndarray) -> np.ndarray:
 
 
 def plot_rois(
-    cv_frame: np.ndarray, settings=None, fov=False, frame_nr=None
+    cv_frame: np.ndarray, settings=None, fov=False, frame_nr=None, proccessing=False
 ) -> np.ndarray:
     cv_frame = cv2.cvtColor(cv_frame, cv2.COLOR_GRAY2RGB)
     if fov:
@@ -140,6 +140,10 @@ def plot_rois(
             1,
         )
         if frame_nr:
+            if proccessing:
+                color = (0, 255, 255)
+            else:
+                color = (255, 0, 0)
             cv2.putText(
                 cv_frame,
                 f"{frame_nr}",
@@ -149,7 +153,7 @@ def plot_rois(
                 ],
                 cv2.FONT_HERSHEY_COMPLEX_SMALL,
                 1,
-                (255, 0, 0),
+                color,
                 1,
             )
 
@@ -182,8 +186,10 @@ class FrameConsumer:
             frames_left = self.frame_queue.qsize()
             while frames_left:
                 try:
-                    cam_id, frame, line2 = self.frame_queue.get_nowait()
-                    print((cam_id, frame, line2))
+                    cam_id, frame, frame_num, process_frames = (
+                        self.frame_queue.get_nowait()
+                    )
+                    # print((cam_id, frame, line2))
                 except queue.Empty:
                     break
 
@@ -214,7 +220,13 @@ class FrameConsumer:
                 )
 
                 fov = self._magnify(fov)
-                fov = plot_rois(fov, self.settings, fov=True, frame_nr=n_frames)
+                fov = plot_rois(
+                    fov,
+                    self.settings,
+                    fov=True,
+                    frame_nr=frame_num,
+                    proccessing=process_frames,
+                )
 
                 cv2.imshow(IMAGE_CAPTION, fov)
                 cv2.namedWindow(IMAGE_CAPTION)

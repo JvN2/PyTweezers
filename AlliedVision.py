@@ -35,10 +35,14 @@ def add_camera_id(frame: Frame, cam_id: str) -> Frame:
 
 
 def try_put_frame(
-    q: queue.Queue, cam: Camera, frame: Optional[Frame], digital_input_state=0
+    q: queue.Queue,
+    cam: Camera,
+    frame: Optional[Frame],
+    frame_num,
+    digital_input_state=0,
 ):
     try:
-        q.put_nowait((cam.get_id(), frame, digital_input_state))
+        q.put_nowait((cam.get_id(), frame, frame_num, digital_input_state))
     except queue.Full:
         pass
 
@@ -82,9 +86,9 @@ class FrameProducer(threading.Thread):
         if frame.get_status() == FrameStatus.Complete:
             if not self.frame_queue.full():
                 frame_cpy = copy.deepcopy(frame)
-                digital_input = 0  # cam.get_feature_by_name("Line2")
-                digital_input_state = digital_input.get()
-                try_put_frame(self.frame_queue, cam, frame_cpy, digital_input_state)
+                frame_num = frame.get_id()
+                line_status = cam.LineStatus.get()
+                try_put_frame(self.frame_queue, cam, frame_cpy, frame_num, line_status)
         cam.queue_frame(frame)
 
     def stop(self):
@@ -95,15 +99,26 @@ class FrameProducer(threading.Thread):
         set_nearest_value(self.cam, "Width", self.settings.get("camera (pix)", 400)[1])
         self.cam.set_pixel_format(PixelFormat.Mono8)
 
+        try:
+            self.cam.TriggerMode.set("Off")
+            self.cam.LineSelector.set("Line2")
+            self.cam.ExposureTime.set(50000)  # ms
+
+            # for f in self.cam.get_all_features():
+            #     try:
+            #         print(f"{f.get_name()}: {f.get()}")
+            #     except Exception as e:
+            #         # print(f"Error getting feature: {e}")
+            #         pass
+            print("Camera settings configured successfully.")
+
+        except Exception as e:
+            print(f"Error camera set up: {e}")
+
     def run(self, settings=None):
         self.log.info("Thread 'FrameProducer({})' started.".format(self.cam.get_id()))
         try:
             with self.cam:
-                # for feat in self.cam.get_all_features():
-                #     try:
-                #         ic(feat.get_name())
-                #     except:
-                #         pass
                 self.setup_camera()
                 try:
                     self.cam.start_streaming(self)
@@ -113,7 +128,7 @@ class FrameProducer(threading.Thread):
         except VmbCameraError:
             pass
         finally:
-            try_put_frame(self.frame_queue, self.cam, None)
+            try_put_frame(self.frame_queue, self.cam, None, -1, False)
         self.log.info(
             "Thread 'FrameProducer({})' terminated.".format(self.cam.get_id())
         )
