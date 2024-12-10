@@ -19,6 +19,7 @@ import tkinter as tk
 import lmfit
 from icecream import ic
 from ast import literal_eval
+from datetime import datetime
 
 import ForceSpectroscopy as fs
 
@@ -26,6 +27,31 @@ warnings.simplefilter("ignore", NaturalNameWarning)
 
 
 # Process the up and down arrow keys to the tk.entry widgets
+
+
+def increment_filename(old_filename=None, base_dir=None):
+    if old_filename:
+        current_file_nr = int(old_filename[-7:-4]) + 1
+    else:
+        current_file_nr = 0
+
+    if not current_file_nr:
+        current_file_nr = 0
+
+    if not base_dir:
+        if os.path.exists("d:/"):
+            disk = "d"
+        else:
+            disk = "c"
+        date = datetime.now().strftime("%Y%m%d")
+        base_dir = Path(f"{disk}:/users/{os.getlogin()}/data/{date}")
+    base_dir.mkdir(parents=True, exist_ok=True)
+    filename = base_dir / f"data_{current_file_nr:03d}.bin"
+
+    while filename.exists():
+        current_file_nr += 1
+        filename = base_dir / f"data_{current_file_nr:03d}.bin"
+    return filename
 
 
 def adjust_value(

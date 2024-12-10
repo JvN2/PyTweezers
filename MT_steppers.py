@@ -8,15 +8,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from icecream import ic
+import queue
 
 
-class StepperApplication:
+class StepperApplication(threading.Thread):
     def __init__(self, port, baudrate=115200):
+        super().__init__()
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None
         self.running = False
         self.df = pd.DataFrame()
+        self.stop_event = threading.Event()
+        self.command_queue = queue.Queue()  # Queue for G-code commands
 
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
@@ -31,35 +35,41 @@ class StepperApplication:
             self.serial_connection.write((gcode + "\n").encode("utf-8"))
             time.sleep(0.1)  # Wait for the command to be processed
 
-    def send_gcodes(self, gcodes):
-        for gcode in gcodes:
-            self.send_gcode(gcode)
+    def run(self):
+        self.connect()
+        self.running = True
+        while self.running:
+            try:
+                gcodes = self.command_queue.get(timeout=1)
+                if isinstance(gcodes, list):
+                    for gcode in gcodes:
+                        self.send_gcode(gcode)
+                else:
+                    self.send_gcode(gcodes)
+            except queue.Empty:
+                continue
+            self.read_response()
 
     def read_response(self):
-        while self.running:
-            if self.serial_connection and self.serial_connection.in_waiting > 0:
-                response = self.serial_connection.readline().decode("utf-8").strip()
-                if response[:4] == "log:":
-                    data = response[4:].split()
-                    try:
-                        data = [float(x) for x in data]
-                        self.df.loc[data[0]] = data[1:]
-                    except:
-                        self.df = pd.DataFrame(columns=data)
-                        self.df.set_index(self.df.columns[0], inplace=True)
-                if "Stopped logging" in response:
-                    self.running = False
-
-    def run(self, gcodes):
-        self.running = True
-        self.connect()
-        threading.Thread(target=self.read_response).start()
-        if self.running:
-            self.send_gcodes(gcodes)
+        while self.serial_connection and self.serial_connection.in_waiting > 0:
+            response = self.serial_connection.readline().decode("utf-8").strip()
+            if "Stopped logging" in response:
+                self.stop_event.set()  # Set the stop event
+            elif response[:4] == "log:":
+                data = response[4:].split()
+                try:
+                    data = [float(x) for x in data]
+                    self.df.loc[data[0]] = data[1:]
+                except:
+                    self.df = pd.DataFrame(columns=data)
+                    self.df.set_index(self.df.columns[0], inplace=True)
 
     def stop(self):
         self.running = False
         self.disconnect()
+
+    def get_dataframe(self):
+        return self.df.copy()
 
 
 def update_plot(frame, stepper_app, lines):

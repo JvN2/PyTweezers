@@ -1,49 +1,21 @@
 import tkinter as tk
 from tkinter import messagebox
+from pathlib import Path
 import threading
 import numpy as np
-import os
-from datetime import datetime
 from icecream import ic
-from pathlib import Path
-
+import matplotlib.pyplot as plt
 from AlliedVision import CameraApplication
-import DummyCamera
-
+from TraceIO import increment_filename
+from MT_steppers import StepperApplication, to_gcode
 from MT_settings import SettingsEditor
-from MT_steppers import to_gcode, StepperApplication
-import TraceIO
 
-
-def increment_filename(old_filename=None, base_dir=None):
-    if old_filename:
-        current_file_nr = int(old_filename[-7:-4]) + 1
-    else:
-        current_file_nr = 0
-
-    if not current_file_nr:
-        current_file_nr = 0
-
-    if not base_dir:
-        if os.path.exists("d:/"):
-            disk = "d"
-        else:
-            disk = "c"
-        date = datetime.now().strftime("%Y%m%d")
-        base_dir = Path(f"{disk}:/users/{os.getlogin()}/data/{date}")
-    base_dir.mkdir(parents=True, exist_ok=True)
-    filename = base_dir / f"data_{current_file_nr:03d}.bin"
-
-    while filename.exists():
-        current_file_nr += 1
-        filename = base_dir / f"data_{current_file_nr:03d}.bin"
-
-    return filename
+SHIFT_KEY = 0x0001
+CTRL_KEY = 0x0004
 
 
 class MainApp:
     def __init__(self, root):
-
         self.initialize_settings()
 
         self.root = root
@@ -51,8 +23,8 @@ class MainApp:
         self.root.title("Magnetic Tweezers")
         self.root.iconbitmap("MagnetIcon.ico")
 
-        self.dummy_camera = DummyCamera.CameraApplication(dummy=True)
         self.stepper_app = StepperApplication(port="COM5")
+        self.stepper_app.start()
 
         menubar = tk.Menu(root)
         root.config(menu=menubar)
@@ -76,16 +48,12 @@ class MainApp:
         help_menu.add_command(label="Test", command=self.test)
         menubar.add_cascade(label="Help", menu=help_menu)
 
-        key_combinations = [
-            "<Alt-Up>",
-            "<Alt-Down>",
-            "<Alt-Left>",
-            "<Alt-Right>",
-            "<Alt-Prior>",
-            "<Alt-Next>",
-        ]
-        for key in key_combinations:
-            self.root.bind(key, self.handle_keyboard)
+        self.root.bind("<Alt-Up>", self.handle_keyboard)
+        self.root.bind("<Alt-Down>", self.handle_keyboard)
+        self.root.bind("<Alt-Left>", self.handle_keyboard)
+        self.root.bind("<Alt-Right>", self.handle_keyboard)
+        self.root.bind("<Alt-Prior>", self.handle_keyboard)
+        self.root.bind("<Alt-Next>", self.handle_keyboard)
 
     def initialize_settings(self):
         self.settings = {}
@@ -100,48 +68,27 @@ class MainApp:
 
         self.settings["frames"] = 0
 
-        # self.settings["_filename"] = increment_filename()
+        self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "calibrate"
         self.settings["_trajectory"] = None
 
     def start_camera(self):
-        self.camera = CameraApplication(settings=self.settings)
-        threading.Thread(target=self.camera.run).start()
+        self.camera_app = CameraApplication(settings=self.settings)
+        threading.Thread(target=self.camera_app.run).start()
 
     def stop_camera(self):
-        self.camera.stop()
+        self.camera_app.stop()
 
     def exit_application(self):
         try:
-            self.stop_camera()
-        except AttributeError:
+            self.stepper_app.stop()
+            self.camera_app.stop()
+        except:
             pass
         self.root.quit()
 
     def change_settings(self):
-        settings = {
-            "roi_size (pix)": (self.settings["roi_size (pix)"], 2, 8, 1, "2log"),
-            "frames": (self.settings["frames"], 0, 4, 1, "10log"),
-        }
-
-        settings_editor = SettingsEditor(self.root, settings, "Adjust settings ...")
-        self.root.wait_window(settings_editor)
-
-        if settings_editor.settings:
-            for key, value in settings_editor.settings.items():
-                self.settings[key] = value
-
-    def show_about(self):
-        messagebox.showinfo(
-            "About", "Camera Control Application v0.1\n(c) 2024 by John van Noort"
-        )
-
-    def test(self):
-        print("Test")
-        data = TraceIO.hdf_data(filename=self.settings["_filename"].with_suffix(".hdf"))
-        data.settings = self.settings
-        data.save(settings=True)
-        ic(data.filename)
+        pass
 
     def create_trajectory(self):
         settings = {
@@ -164,34 +111,50 @@ class MainApp:
 
     def go_trajectory(self):
         if self.settings["_trajectory"]:
-            gcode = to_gcode(self.settings["_trajectory"])
-            self.stepper_app.stop()  # Stop the stepper application before starting a new connection
-            threading.Thread(target=self.stepper_app.run, args=(gcode,)).start()
+            ic(to_gcode(self.settings["_trajectory"]))
+            self.stepper_app.command_queue.put(to_gcode(self.settings["_trajectory"]))
         else:
             messagebox.showinfo("Error", "No trajectory defined")
 
     def handle_keyboard(self, event):
-        step_size = 1
-        if event.state & 0x0001:
+        step_size = 0.05  # mm
+        if event.state & SHIFT_KEY:
             step_size *= 10
-        if event.state & 0x0004:
+        if event.state & CTRL_KEY:
             step_size *= 0.1
 
-        gcodes = ["G91"]
+        # adjust direction depending on camera orientation
+        xdir = 1
+        ydir = -1
+
+        gcode = ["G91"]
         if event.keysym == "Up":
-            gcodes.append(f"G1 Y{step_size:.3f} F1000")
+            gcode.append(f"G1 Y{ydir*step_size:.3f} F1000")
         elif event.keysym == "Down":
-            gcodes.append(f"G1 Y{-step_size:.3f} F1000")
+            gcode.append(f"G1 Y{-ydir*step_size:.3f} F1000")
         elif event.keysym == "Left":
-            gcodes.append(f"G1 X{-step_size:.3f} F1000")
+            gcode.append(f"G1 X{-xdir*step_size:.3f} F1000")
         elif event.keysym == "Right":
-            gcodes.append(f"G1 X{step_size:.3f} F1000")
+            gcode.append(f"G1 X{xdir*step_size:.3f} F1000")
         elif event.keysym == "Prior":
-            gcodes.append(f"G1 Z{step_size:.3f} F1000")
+            gcode.append(f"G1 Z{step_size:.3f} F1000")
         elif event.keysym == "Next":
-            gcodes.append(f"G1 Z{-step_size:.3f} F1000")
-        gcodes.append("G90")
-        ic(gcodes)
+            gcode.append(f"G1 Z{-step_size:.3f} F1000")
+        gcode.append("G90")
+
+        self.stepper_app.command_queue.put(gcode)
+
+    def show_about(self):
+        messagebox.showinfo(
+            "About", "Camera Control Application v0.1\n(c) 2024 by John van Noort"
+        )
+
+    def test(self):
+        print("Test")
+        df = self.stepper_app.get_dataframe()
+        ic(df)
+        plt.plot(df["Z"])
+        plt.show()
 
 
 if __name__ == "__main__":
