@@ -33,12 +33,13 @@ class StepperApplication(threading.Thread):
     def send_gcode(self, gcode):
         if self.serial_connection and self.serial_connection.is_open:
             self.serial_connection.write((gcode + "\n").encode("utf-8"))
-            time.sleep(0.1)  # Wait for the command to be processed
+            time.sleep(0.05)  # Wait for the command to be processed
 
     def run(self):
         self.connect()
         self.running = True
         while self.running:
+            self.read_response()
             try:
                 gcodes = self.command_queue.get(timeout=1)
                 if isinstance(gcodes, list):
@@ -48,19 +49,24 @@ class StepperApplication(threading.Thread):
                     self.send_gcode(gcodes)
             except queue.Empty:
                 continue
-            self.read_response()
 
     def read_response(self):
         while self.serial_connection and self.serial_connection.in_waiting > 0:
             response = self.serial_connection.readline().decode("utf-8").strip()
-            if "Stopped logging" in response:
-                self.stop_event.set()  # Set the stop event
-            elif response[:4] == "log:":
+            if response[:4] == "log:":
                 data = response[4:].split()
                 try:
                     data = [float(x) for x in data]
                     self.df.loc[data[0]] = data[1:]
                 except:
+                    data = [
+                        "Time (s)",
+                        "X (mm)",
+                        "Y (mm)",
+                        "Focus (mm)",
+                        "Shift (mm)",
+                        "Rotation (turns)",
+                    ]
                     self.df = pd.DataFrame(columns=data)
                     self.df.set_index(self.df.columns[0], inplace=True)
 
@@ -177,6 +183,7 @@ if __name__ == "__main__":
     # print(convert_to_section(0, 0, 10, 0, 1, 8, 0.1))
 
     stepper_app = StepperApplication(port="COM5")
+    stepper_app.start()
 
     trajectory = {
         "axis": "Z (mm)",
@@ -194,7 +201,7 @@ if __name__ == "__main__":
     if True:
 
         # Start the stepper application with the G-code commands
-        threading.Thread(target=stepper_app.run, args=(gcode,)).start()
+        stepper_app.command_queue.put(gcode)
 
         # Set up the plot
         fig, ax = plt.subplots()

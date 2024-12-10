@@ -5,6 +5,7 @@ import threading
 import numpy as np
 from icecream import ic
 import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from AlliedVision import CameraApplication
 from TraceIO import increment_filename
 from MT_steppers import StepperApplication, to_gcode
@@ -19,7 +20,7 @@ class MainApp:
         self.initialize_settings()
 
         self.root = root
-        self.root.geometry("400x200")
+        self.root.geometry("800x400+0+0")
         self.root.title("Magnetic Tweezers")
         self.root.iconbitmap("MagnetIcon.ico")
 
@@ -39,6 +40,7 @@ class MainApp:
         measure_menu.add_command(label="Stop", command=self.stop_camera)
         measure_menu.add_command(label="Start", command=self.start_camera)
         measure_menu.add_separator()
+        measure_menu.add_command(label="Calibrate LUT", command=self.calibrate_lut)
         measure_menu.add_command(label="Trajectory", command=self.create_trajectory)
         measure_menu.add_command(label="Go", command=self.go_trajectory)
         menubar.add_cascade(label="Measure", menu=measure_menu)
@@ -55,6 +57,14 @@ class MainApp:
         self.root.bind("<Alt-Prior>", self.handle_keyboard)
         self.root.bind("<Alt-Next>", self.handle_keyboard)
 
+        # Create a matplotlib figure and axis
+        self.fig, self.ax = plt.subplots()
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+
+        # Start the update loop
+        self.update_plot()
+
     def initialize_settings(self):
         self.settings = {}
         self.settings["roi_size (pix)"] = 50
@@ -69,7 +79,7 @@ class MainApp:
         self.settings["frames"] = 0
 
         self.settings["_filename"] = increment_filename()
-        self.settings["_aquisition mode"] = "calibrate"
+        self.settings["_aquisition mode"] = "idle"
         self.settings["_trajectory"] = None
 
     def start_camera(self):
@@ -89,6 +99,20 @@ class MainApp:
 
     def change_settings(self):
         pass
+
+    def calibrate_lut(self):
+        range = 0.04
+        gcode = [
+            "G91",
+            "G93 S0.1",
+            f"G1 Z{range:.3f} F0.5",
+            "G93",
+            f"G1 Z-{range:.3f} F10",
+            "G90",
+        ]
+        self.settings["_aquisition mode"] = "calibrate"
+        self.settings["_filename"] = increment_filename()
+        self.stepper_app.command_queue.put(gcode)
 
     def create_trajectory(self):
         settings = {
@@ -111,7 +135,8 @@ class MainApp:
 
     def go_trajectory(self):
         if self.settings["_trajectory"]:
-            ic(to_gcode(self.settings["_trajectory"]))
+            self.settings["_aquisition mode"] = "measure"
+            self.settings["_filename"] = increment_filename()
             self.stepper_app.command_queue.put(to_gcode(self.settings["_trajectory"]))
         else:
             messagebox.showinfo("Error", "No trajectory defined")
@@ -152,9 +177,21 @@ class MainApp:
     def test(self):
         print("Test")
         df = self.stepper_app.get_dataframe()
-        ic(df)
         plt.plot(df["Z"])
         plt.show()
+
+    def update_plot(self):
+        df = self.stepper_app.get_dataframe()
+        label = "Focus (mm)"
+        self.ax.clear()
+        try:
+            df[label].plot(ax=self.ax)
+            self.ax.set_ylabel(label)
+            self.fig.tight_layout()
+            self.canvas.draw()
+        except:
+            pass
+        self.root.after(500, self.update_plot)  # Update the plot every second
 
 
 if __name__ == "__main__":

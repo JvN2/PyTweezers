@@ -228,33 +228,31 @@ class FrameConsumer:
                     proccessing=process_frames,
                 )
 
-                cv2.imshow(IMAGE_CAPTION, fov)
-                cv2.namedWindow(IMAGE_CAPTION)
-                cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
+                if frame_num % 2 == 0:
+                    cv2.imshow(IMAGE_CAPTION, fov)
+                    cv2.namedWindow(IMAGE_CAPTION)
+                    cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
+                n_frames += 1
 
                 # extract selected roi and save it
-                if self.settings.get("_aquisition mode") == "calibrate":
-                    (roi, _, _) = get_subarray(
-                        cv_images,
-                        self.settings["rois"][self.settings["selected"]],
-                        self.settings["roi_size (pix)"],
-                    )
-                    self.frames.append(roi)
-
-                if (
-                    n_frames >= self.settings["frames"] - 1
-                    and self.settings["frames"] != 0
-                ):
-                    self.quit = True
-
-                n_frames += 1
+                if process_frames:
+                    if self.settings.get("_aquisition mode") == "calibrate":
+                        (roi, _, _) = get_subarray(
+                            cv_images,
+                            self.settings["rois"][self.settings["selected"]],
+                            self.settings["roi_size (pix)"],
+                        )
+                        self.frames.append(roi)
+                else:
+                    if len(self.frames):
+                        self.save_frames_to_binary_file(self.settings["_filename"])
+                        self.frames = []
+                        self.settings["_aquisition mode"] = "idle"
 
             cv2.waitKey(10)
             if self.quit:
                 cv2.destroyAllWindows()
                 alive = False
-                if len(self.frames):
-                    self.save_frames_to_binary_file(self.settings["_filename"])
 
     def stop(self):
         self.quit = True
@@ -332,23 +330,19 @@ class FrameConsumer:
             for frame in self.frames:
                 frame.tofile(f)
 
-    def load_frames_from_binary_file(self, filename: str, shape: tuple, count: int):
-        frames = []
-        with open(filename, "rb") as f:
-            for _ in range(count):
-                frame = np.fromfile(f, dtype=np.uint8, count=np.prod(shape)).reshape(
-                    shape
-                )
-                frames.append(frame)
-        return frames
+        print(f"Saved {len(self.frames)} frames to {filename}")
+
+
+def load_frames_from_binary_file(self, filename: str, shape: tuple, count: int):
+    frames = []
+    with open(filename, "rb") as f:
+        for _ in range(count):
+            frame = np.fromfile(f, dtype=np.uint8, count=np.prod(shape)).reshape(shape)
+            frames.append(frame)
+    return frames
 
 
 if __name__ == "__main__":
     # print("This is a module, not a standalone script.")
-    array = np.array([[x for x in range(1000)] for y in range(1000)])
-    center = (500, 1500)
-    width = 10
-    (subarray, center, width) = get_subarray(array.T, center, width)
-    ic(subarray)
-    ic(center)
-    ic(width)
+    filename = r"d:\users\noort\data\20241210\data_016.bin"
+    frames = load_frames_from_binary_file(filename, (100, 100), 10)

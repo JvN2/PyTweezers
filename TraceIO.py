@@ -1337,7 +1337,6 @@ if __name__ == "__main__":
 
             data.save(filename, settings=True)
 
-        data = hdf_data(filename)
         data.read(filename, "0")
         ic(data.list_channels())
         ic(data.settings["roi_size (pix)"])
