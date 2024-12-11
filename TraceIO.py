@@ -20,11 +20,12 @@ import lmfit
 from icecream import ic
 from ast import literal_eval
 from datetime import datetime
+import threading
+from icecream import ic
 
 import ForceSpectroscopy as fs
 
 warnings.simplefilter("ignore", NaturalNameWarning)
-
 
 # Process the up and down arrow keys to the tk.entry widgets
 
@@ -518,9 +519,9 @@ def plot_heatmap(window, plot, xdata, ydata, size=100):
 
 
 class hdf_data(object):
-    def __init__(self, filename=None, label=None):
+    def __init__(self, filename, label=None):
         self.open_files = []
-        self.filename = filename
+        self.filename = Path(filename).with_suffix(".hdf")
         self.label = None
         self.shared_tracenames = []
         self.parameters = pd.DataFrame()
@@ -569,24 +570,19 @@ class hdf_data(object):
             except tables.NoSuchNodeError:
                 return False
 
-            self.parameters = pd.DataFrame(hdf5_file.get_node(rf"/ parameters")[:])
-            self.parameters.index = self.parameters[" label"].str.decode("utf-8")
-            self.parameters = self.parameters.drop(" label", axis=1)
+            try:
+                self.parameters = pd.DataFrame(hdf5_file.get_node(rf"/ parameters")[:])
+                self.parameters.index = self.parameters[" label"].str.decode("utf-8")
+                self.parameters = self.parameters.drop(" label", axis=1)
 
-            # Separate columns with and without "e:" and sort them
-            columns = sorted(
-                [c for c in self.parameters.columns if "e:" not in c]
-            ) + sorted([c for c in self.parameters.columns if "e:" in c])
+                # Separate columns with and without "e:" and sort them
+                columns = sorted(
+                    [c for c in self.parameters.columns if "e:" not in c]
+                ) + sorted([c for c in self.parameters.columns if "e:" in c])
 
-            self.parameters = self.parameters[columns]
-
-            self.filename = filename
-            if self.open_files == []:
-                self.open_files = [filename]
-            else:
-                if filename not in self.open_files:
-                    self.open_files.append(filename)
-                    self.open_files = sorted(self.open_files)
+                self.parameters = self.parameters[columns]
+            except tables.NoSuchNodeError:
+                pass
 
             try:
                 settings = pd.DataFrame(hdf5_file.get_node(rf"/ settings")[:])
@@ -601,69 +597,102 @@ class hdf_data(object):
                         )
             except tables.NoSuchNodeError:
                 pass
+
+            self.filename = filename
+            if self.open_files == []:
+                self.open_files = [filename]
+            else:
+                if filename not in self.open_files:
+                    self.open_files.append(filename)
+                    self.open_files = sorted(self.open_files)
+
         return True
 
     def save(self, traces=True, parameters=True, settings=False):
 
         if self.filename is None:
             print("No filename provided.")
-            return
-        with tables.open_file(self.filename, mode="a") as hdf5_file:
+            return None
 
-            if settings and self.settings:
-                try:
-                    hdf5_file.remove_node(rf"/ settings", recursive=True)
-                except tables.NoSuchNodeError:
-                    pass
-                df = pd.DataFrame(
-                    [[str(key), str(value)] for key, value in self.settings.items()],
-                    columns=["setting", "value"],
-                )
+        with threading.Lock():
+            with tables.open_file(self.filename, mode="a") as hdf5_file:
 
-                df["setting"] = df["setting"].astype("S")
-                df["value"] = df["value"].astype("S")
-                hdf5_file.create_table(
-                    r"/", " settings", obj=df.to_records(index=False)
-                )
+                if settings and self.settings:
+                    try:
+                        hdf5_file.remove_node(rf"/ settings", recursive=True)
+                    except tables.NoSuchNodeError:
+                        pass
+                    df = pd.DataFrame(
+                        [
+                            [str(key), str(value)]
+                            for key, value in self.settings.items()
+                            if key[0] != "_"
+                        ],
+                        columns=["setting", "value"],
+                    )
 
-            if traces and not self.traces.empty:
-                try:
-                    hdf5_file.remove_node(rf"/{self.label}", recursive=True)
-                except tables.NoSuchNodeError:
-                    pass
-                shared_tracenames = [
-                    channel
-                    for channel in self.shared_tracenames
-                    if channel in self.traces.columns
-                ]
-                if shared_tracenames:
+                    df.sort_values("setting", inplace=True)
+                    df.reset_index(drop=True, inplace=True)
+
+                    df["setting"] = df["setting"].astype("S")
+                    df["value"] = df["value"].astype("S")
+
                     hdf5_file.create_table(
-                        rf"/",
-                        self.label,
-                        obj=self.traces.drop(columns=shared_tracenames).to_records(
-                            index=False
-                        ),
+                        r"/", " settings", obj=df.to_records(index=False)
+                    )
+
+                if traces and not self.traces.empty:
+
+                    shared_tracenames = [
+                        channel
+                        for channel in self.shared_tracenames
+                        if channel in self.traces.columns
+                    ]
+
+                    if shared_tracenames:
+                        try:
+                            hdf5_file.remove_node(rf"/ shared", recursive=True)
+                        except tables.NoSuchNodeError:
+                            pass
+
+                        hdf5_file.create_table(
+                            rf"/",
+                            " shared",
+                            obj=self.traces[shared_tracenames].to_records(index=False),
+                        )
+
+                    try:
+                        hdf5_file.remove_node(rf"/{self.label}", recursive=True)
+                    except tables.NoSuchNodeError:
+                        pass
+
+                    labeled_traces = [
+                        col
+                        for col in self.traces.columns
+                        if col not in shared_tracenames
+                    ]
+
+                    if labeled_traces:
+                        hdf5_file.create_table(
+                            rf"/",
+                            self.label,
+                            obj=self.traces[labeled_traces].to_records(index=False),
+                        )
+
+                if parameters and not self.parameters.empty:
+                    df = self.parameters.copy().astype(float)
+                    df[" label"] = df.index.values.astype("bytes")
+                    df = df.reindex(
+                        columns=sorted(df.columns.tolist(), key=natural_keys)
                     )
                     try:
-                        hdf5_file.remove_node(rf"/ shared", recursive=True)
+                        hdf5_file.remove_node(rf"/ parameters", recursive=True)
                     except tables.NoSuchNodeError:
                         pass
                     hdf5_file.create_table(
-                        rf"/",
-                        " shared",
-                        obj=self.traces[shared_tracenames].to_records(index=False),
+                        r"/", " parameters", obj=df.to_records(index=False)
                     )
-            if parameters and not self.parameters.empty:
-                df = self.parameters.copy().astype(float)
-                df[" label"] = df.index.values.astype("bytes")
-                df = df.reindex(columns=sorted(df.columns.tolist(), key=natural_keys))
-                try:
-                    hdf5_file.remove_node(rf"/ parameters", recursive=True)
-                except tables.NoSuchNodeError:
-                    pass
-                hdf5_file.create_table(
-                    r"/", " parameters", obj=df.to_records(index=False)
-                )
+        return self.filename
 
     def export(self, filename=None, label=None):
         if label is None:
@@ -1088,6 +1117,36 @@ def import_tdms(filename, data=None):
     return data
 
 
+def create_hdf(settings, stepper, traces=None):
+    data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
+    data.set_settings(settings)
+
+    if traces is not None:
+        time = traces["Frame"].values
+        time = time - time[0]
+        time /= time[-1]
+        time *= stepper.index[-1]
+
+        data.traces["Time (s)"] = time
+
+        for col in stepper.loc[:, stepper.nunique() > 1]:
+            data.traces[col] = np.interp(time, stepper.index, stepper[col].values)
+
+        data.shared_tracenames = list(data.traces.columns)
+        filename = data.save(settings=True)
+
+        labels = set([trace.split(" ")[0][1:] for trace in traces.columns[1:]])
+        channels = set([re.sub(r"\d+", "", trace) for trace in traces.columns[1:]])
+
+        for label in sorted(labels):
+            data.label = label
+            for channel in sorted(channels):
+                data.traces[channel] = traces[channel[0] + label + channel[1:]].values
+            filename = data.save(settings=False)
+
+    print(f"Data saved to {filename}")
+
+
 if __name__ == "__main__":
     # filename = rf"data\data_031.hdf"
     # label = "0"
@@ -1309,42 +1368,17 @@ if __name__ == "__main__":
         plt.show()
 
     if True:
-        filename = rf"data_000.hdf"
-        data = hdf_data(filename)
-        if False:
-            ic(data.filename)
+        filename = rf"data_001.bin"
+        create_hdf(filename)
 
-            data.settings["roi_size (pix)"] = 50
-            data.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
-            data.settings["selected"] = 0
+        # data.read(filename, "0")
+        # ic(data.list_channels())
+        # ic(data.settings["roi_size (pix)"])
 
-            data.settings["window (pix)"] = 800
-            data.settings["camera (pix)"] = np.asarray((1024, 1024))
+        # # ic(data.settings)
+        # # ic(data.traces)
+        # # ic(data.parameters)
 
-            data.shared_tracenames = [
-                "Time (s)",
-                "Shift (mm)",
-                "F (pN)",
-                "Rotation (turns)",
-            ]
-            data.traces["Time (s)"] = np.linspace(0, 1, 1000)
-            data.traces["Z (um)"] = np.sin(2 * np.pi * data.traces["Time (s)"])
-
-            data.label = "0"
-            data.set_parameter("Zbead (um)", 0.1)
-            data.set_parameter("L (bp)", 5000, type="global")
-            data.set_parameter("A (nm)", 50, type="global")
-
-            data.save(filename, settings=True)
-
-        data.read(filename, "0")
-        ic(data.list_channels())
-        ic(data.settings["roi_size (pix)"])
-
-        # ic(data.settings)
-        # ic(data.traces)
-        # ic(data.parameters)
-
-        # label = np.random.choice(data.list_labels())
-        # data.read(filename, label)
-        data.export(filename, 0)
+        # # label = np.random.choice(data.list_labels())
+        # # data.read(filename, label)
+        # data.export(filename, 0)

@@ -77,6 +77,9 @@ class StepperApplication(threading.Thread):
     def get_dataframe(self):
         return self.df.copy()
 
+    def clear_dataframe(self):
+        self.df = pd.DataFrame()
+
 
 def update_plot(frame, stepper_app, lines):
     if not stepper_app.df.empty:

@@ -7,7 +7,7 @@ from icecream import ic
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from AlliedVision import CameraApplication
-from TraceIO import increment_filename
+from TraceIO import increment_filename, create_hdf
 from MT_steppers import StepperApplication, to_gcode
 from MT_settings import SettingsEditor
 
@@ -26,6 +26,7 @@ class MainApp:
 
         self.stepper_app = StepperApplication(port="COM5")
         self.stepper_app.start()
+        self.start_camera()
 
         menubar = tk.Menu(root)
         root.config(menu=menubar)
@@ -67,7 +68,7 @@ class MainApp:
 
     def initialize_settings(self):
         self.settings = {}
-        self.settings["roi_size (pix)"] = 50
+        self.settings["roi_size (pix)"] = 100
         self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
         self.settings["selected"] = 0
 
@@ -81,6 +82,7 @@ class MainApp:
         self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "idle"
         self.settings["_trajectory"] = None
+        self.settings["_traces"] = None
 
     def start_camera(self):
         self.camera_app = CameraApplication(settings=self.settings)
@@ -106,6 +108,7 @@ class MainApp:
             "G91",
             "G93 S0.1",
             f"G1 Z{range:.3f} F0.5",
+            "G4 S0.25",
             "G93",
             f"G1 Z-{range:.3f} F10",
             "G90",
@@ -176,22 +179,27 @@ class MainApp:
 
     def test(self):
         print("Test")
-        df = self.stepper_app.get_dataframe()
-        plt.plot(df["Z"])
-        plt.show()
+        # df = self.stepper_app.get_dataframe()
+        # ic(df)
+        # plt.plot(df["Z"])
+        # plt.show()
+        create_hdf(self.settings["_filename"])
 
     def update_plot(self):
-        df = self.stepper_app.get_dataframe()
-        label = "Focus (mm)"
-        self.ax.clear()
-        try:
-            df[label].plot(ax=self.ax)
+        stepper_df = self.stepper_app.get_dataframe()
+        if not stepper_df.empty:
+            label = "Focus (mm)"
+            self.ax.clear()
+            stepper_df[label].plot(ax=self.ax)
             self.ax.set_ylabel(label)
             self.fig.tight_layout()
             self.canvas.draw()
-        except:
-            pass
-        self.root.after(500, self.update_plot)  # Update the plot every second
+
+            if self.settings["_aquisition mode"] == "idle":
+                create_hdf(self.settings, stepper_df, traces=self.settings["_traces"])
+                self.stepper_app.clear_dataframe()
+
+        self.root.after(500, self.update_plot)
 
 
 if __name__ == "__main__":

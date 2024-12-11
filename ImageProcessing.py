@@ -1,10 +1,14 @@
 import queue
 import cv2
 import numpy as np
+import pandas as pd
 
 # from vmbpy import *
 from icecream import ic
 from typing import Tuple, Optional
+from TraceIO import hdf_data, create_hdf
+import itertools
+
 
 FRAME_QUEUE_SIZE = 10
 
@@ -174,7 +178,8 @@ class FrameConsumer:
         self.frame_queue = frame_queue
         self.quit = False
         self.settings = settings
-        self.frames = []
+        self.selected_roi = []
+        self.traces = []
 
     def run(self):
         IMAGE_CAPTION = "MT camera"
@@ -189,7 +194,6 @@ class FrameConsumer:
                     cam_id, frame, frame_num, process_frames = (
                         self.frame_queue.get_nowait()
                     )
-                    # print((cam_id, frame, line2))
                 except queue.Empty:
                     break
 
@@ -242,11 +246,37 @@ class FrameConsumer:
                             self.settings["rois"][self.settings["selected"]],
                             self.settings["roi_size (pix)"],
                         )
-                        self.frames.append(roi)
+
+                        # dummy coords, to be replaced by actual values
+                        coords = np.zeros(3 * len(self.settings["rois"]) + 1)
+                        coords[0] = frame_num
+
+                        try:
+                            if frame_num != self.traces[-1][0]:
+                                self.traces.append(coords)
+                                self.selected_roi.append(roi)
+                        except IndexError:
+                            self.traces = [coords]
+                            self.selected_roi.append(roi)
+
                 else:
-                    if len(self.frames):
+                    if len(self.selected_roi):
                         self.save_frames_to_binary_file(self.settings["_filename"])
-                        self.frames = []
+                        self.selected_roi = []
+
+                        columns = [
+                            [f"X{i} (um)", f"Y{i} (um)", f"Z{i} (um)"]
+                            for i, _ in enumerate(self.settings["rois"])
+                        ]
+                        columns = list(itertools.chain.from_iterable(columns))
+                        columns.insert(0, "Frame")
+
+                        self.settings["_traces"] = pd.DataFrame(
+                            self.traces,
+                            columns=columns,
+                        )
+                        self.traces = []
+
                         self.settings["_aquisition mode"] = "idle"
 
             cv2.waitKey(10)
@@ -327,10 +357,10 @@ class FrameConsumer:
 
     def save_frames_to_binary_file(self, filename: str):
         with open(filename, "wb") as f:
-            for frame in self.frames:
+            for frame in self.selected_roi:
                 frame.tofile(f)
 
-        print(f"Saved {len(self.frames)} frames to {filename}")
+        print(f"Saved {len(self.selected_roi)} frames to {filename}")
 
 
 def load_frames_from_binary_file(self, filename: str, shape: tuple, count: int):
