@@ -6,8 +6,12 @@ import pandas as pd
 # from vmbpy import *
 from icecream import ic
 from typing import Tuple, Optional
-from TraceIO import hdf_data, create_hdf
+from TraceIO import hdf_data
 import itertools
+from pathlib import Path
+from matplotlib import pyplot as plt
+from scipy.ndimage import maximum_filter
+from scipy.optimize import minimize
 
 
 FRAME_QUEUE_SIZE = 10
@@ -95,7 +99,6 @@ def update_fov(
 
 
 def extract_fov(cv_image: np.ndarray, fov: np.ndarray) -> np.ndarray:
-    ic(cv_image, fov)
     return cv_image[
         fov[0][1] : fov[1][1],
         fov[0][0] : fov[1][0],
@@ -213,13 +216,18 @@ class FrameConsumer:
                 )
 
                 # Extract the FOV from the camera image and display it
+                try:
+                    center = self.settings["rois"][self.settings["selected"]]
+                except IndexError:
+                    center = self.settings["fov_center (pix)"]
+                center
                 (
                     fov,
                     self.settings["fov_center (pix)"],
                     self.settings["fov_size (pix)"],
                 ) = get_subarray(
                     cv_images,
-                    self.settings["rois"][self.settings["selected"]],
+                    center,
                     self.settings["fov_size (pix)"],
                 )
 
@@ -363,16 +371,26 @@ class FrameConsumer:
         print(f"Saved {len(self.selected_roi)} frames to {filename}")
 
 
-def load_frames_from_binary_file(self, filename: str, shape: tuple, count: int):
-    frames = []
-    with open(filename, "rb") as f:
-        for _ in range(count):
-            frame = np.fromfile(f, dtype=np.uint8, count=np.prod(shape)).reshape(shape)
-            frames.append(frame)
-    return frames
+def load_bin_file(filename: str):
+    data = hdf_data(filename)
+    shape = [data.traces.shape[0]] + [data.settings["roi_size (pix)"]] * 2
+
+    with open(Path(filename).with_suffix(".bin"), "rb") as f:
+        frames = np.fromfile(f, dtype=np.uint8, count=np.prod(shape)).reshape(shape)
+    return np.asarray(frames)
 
 
 if __name__ == "__main__":
     # print("This is a module, not a standalone script.")
-    filename = r"d:\users\noort\data\20241210\data_016.bin"
-    frames = load_frames_from_binary_file(filename, (100, 100), 10)
+    filename = r"d:\users\noort\data\20241211\data_153.hdf"
+    frames = load_bin_file(filename)
+
+    ac = [find_center(frame) for frame in frames]
+
+    show_frames(ac)
+
+    center = [np.argmax(a) for a in ac]
+
+    plt.imshow(find_center(frames[10]))
+    plt.colorbar()
+    plt.show()

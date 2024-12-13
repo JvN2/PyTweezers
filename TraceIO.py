@@ -101,7 +101,7 @@ def timeit(method):
             name = kw.get("log_name", method.__name__.upper())
             kw["log_time"][name] = int((te - ts) * 1000)
         else:
-            print(f"{time.asctime()} @timeit: {method.__name__} took {te - ts:.3f} s")
+            print(f"{time.asctime()} @timeit: <{method.__name__}> took {te - ts:.3f} s")
         return result
 
     return timed
@@ -540,7 +540,9 @@ class hdf_data(object):
         except (FileNotFoundError, IndexError) as e:
             return
 
-        if filename is not None and label is not None:
+        if filename is not None:
+            if label is None:
+                label = "0"
             self.read(filename, label)
 
     def read(self, filename, label, save=False):
@@ -666,11 +668,13 @@ class hdf_data(object):
                     except tables.NoSuchNodeError:
                         pass
 
-                    labeled_traces = [
-                        col
-                        for col in self.traces.columns
-                        if col not in shared_tracenames
-                    ]
+                    labeled_traces = sorted(
+                        [
+                            col
+                            for col in self.traces.columns
+                            if col not in shared_tracenames
+                        ]
+                    )
 
                     if labeled_traces:
                         hdf5_file.create_table(

@@ -69,7 +69,7 @@ class MainApp:
     def initialize_settings(self):
         self.settings = {}
         self.settings["roi_size (pix)"] = 100
-        self.settings["rois"] = [(50, 50), (100, 200), (198, 150)]
+        self.settings["rois"] = []  # [(50, 50), (100, 200), (198, 150)]
         self.settings["selected"] = 0
 
         self.settings["window (pix)"] = 800
@@ -103,6 +103,9 @@ class MainApp:
         pass
 
     def calibrate_lut(self):
+        if len(self.settings["rois"]) == 0:
+            messagebox.showinfo("Error", "No ROIs defined")
+            return
         range = 0.04
         gcode = [
             "G91",
