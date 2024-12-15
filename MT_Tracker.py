@@ -5,9 +5,16 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from icecream import ic
 from tqdm import tqdm
+import tkinter as tk
 
 from ImageProcessing import load_bin_file
 from TraceIO import hdf_data, timeit
+
+
+import tkinter as tk
+from tkinter import ttk
+import threading
+import time
 
 
 def radial_average(image, step=0.25, show=False):
@@ -110,7 +117,10 @@ def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
         titles = [f"Image {i}" for i in range(len(images))]
     size = 5
     n = len(images)
-    _, axes = plt.subplots(1, n, figsize=(n * size, 5))
+    _, axes = plt.subplots(1, n, figsize=(n * size, size))
+
+    if n == 1:
+        axes = [axes]
     for i, (im, title) in enumerate(zip(images, titles)):
 
         rows, cols = im.shape
@@ -123,7 +133,7 @@ def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
 
         # Create an axes divider and append a colorbar to the right of the image
         divider = make_axes_locatable(axes[i])
-        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cax = divider.append_axes("right", size="5%", pad=0.15)
         plt.colorbar(im_plot, cax=cax)
 
         try:
@@ -134,7 +144,26 @@ def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
             axes[i].add_artist(circle)
         except (IndexError, TypeError):
             pass
-    plt.show()
+
+    plt.tight_layout()
+    plt.show(block=False)
+
+    # Move the window to the top left corner
+    def move_window():
+        window = plt.get_current_fig_manager().window
+        window.wm_geometry("+0+0")
+
+    def on_close(event=None):
+        plt.close("all")
+        root.quit()
+
+    root = tk.Tk()
+    root.withdraw()  # Hide the root window
+    root.after(1, move_window)  # Move the window after a short delay
+    window = plt.get_current_fig_manager().window
+    window.bind("<Destroy>", on_close)
+
+    root.mainloop()
 
 
 def find_peak(image, centered=True):
@@ -187,7 +216,7 @@ def get_z(image, z_ref, lut, mask, show=True):
     width = 0.5
     index = np.argmin(diff)
     selection = np.abs(z_ref - z_ref[index]) < width * 2
-    weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
+    # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
     weight = np.ones_like(z_ref[selection])
 
     poly = np.polyfit(z_ref[selection], diff[selection], 2, w=np.asarray(weight))
@@ -247,29 +276,89 @@ def process_lut(z, images, show=False):
     return lut
 
 
-def test(z, frames):
-    process_lut(z, frames)
+def test():
+    size = 100
+    dist = distance_from_center(np.zeros((size, size)), offset=[0, 0])
+
+    p = 3
+
+    im = np.cos(dist * 2 * np.pi / p)
+
+    im *= bandpass_filter(
+        im, high=5, low=size / 3, width=20, centered=True, cut_offset=False
+    )
+
+    fft = np.fft.fftshift(np.fft.fft2(im))
+    phase = np.angle(fft)
+    phase *= bandpass_filter(
+        phase, high=size / p, low=size / p, width=2, centered=True, cut_offset=False
+    )
+    # imshow_multiple([im, np.abs(fft), phase], titles=["Image", "FFT", "Phase"])
+
+    amplitude = np.zeros_like(im)
+    p = size / 10
+    # for p in range(15, 30, 5):
+    for p in np.random.random(5):
+        p += 15 * p + 10
+        amplitude += bandpass_filter(
+            amplitude, high=p, low=p, width=1, centered=True, cut_offset=False
+        )
+
+    phase = np.angle(np.cos(dist * 2 * np.pi / p))
+    phase = np.zeros_like(amplitude)
+
+    # Define the shift (in pixels)
+    shift_x, shift_y = 45, -40
+
+    # Create a linear phase shift
+    rows, cols = amplitude.shape
+    x = np.fft.fftfreq(cols) * cols
+    y = np.fft.fftfreq(rows) * rows
+    X, Y = np.meshgrid(x, y)
+    phase_shift = 2 * np.pi * (shift_x * X / cols + shift_y * Y / rows)
+
+    # Add the phase shift to the original phase
+    phase += phase_shift
+
+    # phase = np.angle(np.exp(1j * phase))
+
+    amplitude *= bandpass_filter(
+        amplitude, high=1, low=35, width=15, centered=True, cut_offset=False
+    )
+
+    # Combine amplitude and phase into a complex image
+    complex_image = amplitude * np.exp(1j * phase)
+
+    # Perform inverse FFT to get the spatial domain image
+    spatial_image = np.fft.ifft2(np.fft.ifftshift(complex_image)).real
+
+    phase = np.fft.ifftshift(phase)
+    imshow_multiple(
+        [amplitude, phase, spatial_image],
+        titles=["Amplitude", "Phase", "Spatial Image"],
+    )
 
 
 if __name__ == "__main__":
+    test()
     # print("This is a module, not a standalone script.")
     filename = r"d:\users\noort\data\20241211\data_153.hdf"
     # filename = r"d:\users\noort\data\20241212\data_006.hdf"
-    frames = load_bin_file(filename)
-    data = hdf_data(filename)
+    # frames = load_bin_file(filename)
+    # data = hdf_data(filename)
 
-    z = data.traces["Focus (mm)"].values * 1000
-    lut, mask = create_lut(frames, average=0.25)
+    # z = data.traces["Focus (mm)"].values * 1000
+    # lut, mask = create_lut(frames, average=0.25)
 
-    z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
-    z = np.asarray(z_new)
-    z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
+    # z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
+    # z = np.asarray(z_new)
+    # z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
 
-    poly = np.polyfit(z, z_new, 1)
-    fit = np.polyval(poly, z)
+    # poly = np.polyfit(z, z_new, 1)
+    # fit = np.polyval(poly, z)
 
-    plt.plot(z, z_new - fit, marker="o")
-    plt.show()
+    # plt.plot(z, z_new - fit, marker="o")
+    # plt.show()
 
     # test(z, frames)
 
