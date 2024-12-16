@@ -254,7 +254,7 @@ def test(z, frames):
 if __name__ == "__main__":
     # print("This is a module, not a standalone script.")
     filename = r"d:\users\noort\data\20241211\data_153.hdf"
-    # filename = r"d:\users\noort\data\20241212\data_006.hdf"
+    filename = r"d:\users\noort\data\20241212\data_006.hdf"
     frames = load_bin_file(filename)
     data = hdf_data(filename)
 
@@ -265,10 +265,14 @@ if __name__ == "__main__":
     z = np.asarray(z_new)
     z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
 
-    poly = np.polyfit(z, z_new, 1)
+    weight = np.ones_like(z)
+    weight[:10] = 0
+    weight[-10:] = 0
+    poly = np.polyfit(z, z_new, 1, w=weight)
     fit = np.polyval(poly, z)
 
     plt.plot(z, z_new - fit, marker="o")
+    plt.ylim([-0.25, 0.25])
     plt.show()
 
     # test(z, frames)
