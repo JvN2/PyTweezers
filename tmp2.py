@@ -27,7 +27,7 @@ x, y = np.ogrid[:rows, :cols]
 mask_area = np.sqrt((x - center[0]) ** 2 + (y - center[1]) ** 2) <= r
 mask[mask_area] = 0
 
-mask = bandpass_filter(image, high=8, low=25, centered=True, cut_offset=True)
+mask = bandpass_filter(image, high=8, low=25, centered=True, cut_dc=True)
 
 # Apply mask and inverse FFT
 fft_shifted_masked = fft_shifted * mask

@@ -1,6 +1,6 @@
 import cv2
 import numpy as np
-from scipy.optimize import minimize
+from scipy.optimize import minimize, curve_fit
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from icecream import ic
@@ -15,30 +15,6 @@ import tkinter as tk
 from tkinter import ttk
 import threading
 import time
-
-
-def radial_average(image, step=0.25, show=False):
-    mean_im = np.zeros_like(image, dtype=float)
-    for r in np.arange(0, np.min(image.shape) // 2, step):
-        mask = bandpass_filter(
-            image,
-            high=r - step / 2,
-            low=r + step / 2,
-            width=step,
-            centered=True,
-            cut_offset=False,
-        )
-        mask = mask * (np.sum(mask * image) / np.sum(mask))
-        mean_im += mask
-    image /= np.sum(image)
-    mean_im /= np.sum(mean_im)
-    if show:
-        imshow_multiple(
-            [image, mean_im, np.abs(image - mean_im)],
-            titles=["Image", "Mean image", "Difference"],
-            vrange=[0, 5 / np.prod(image.shape)],
-        )
-    return mean_im
 
 
 def show_frames(frames, circles=None):
@@ -60,33 +36,6 @@ def show_frames(frames, circles=None):
         cv2.imshow(window_name, frame)
         cv2.waitKey(100)
     cv2.destroyAllWindows()
-
-
-def distance_from_center(image, offset=[0, 0]):
-    (rows, cols) = image.shape
-    center_row, center_col = offset[0] + rows // 2, offset[1] + cols // 2
-    y, x = np.ogrid[:rows, :cols]
-    distance = np.sqrt((x - center_col) ** 2 + (y - center_row) ** 2)
-    return distance
-
-
-def bandpass_filter(
-    image, low=None, high=None, width=1, centered=False, cut_offset=True
-):
-    np.seterr(over="ignore")
-    r = distance_from_center(image)
-
-    with np.errstate(over="ignore"):
-        mask = np.ones_like(r)
-        if low is not None:
-            mask *= 1 / (1 + np.exp(-(low - r) / (width / 4)))
-        if high is not None:
-            mask *= 1 / (1 + np.exp(-(r - high) / (width / 4)))
-    if cut_offset:
-        mask[len(mask) // 2] = 0
-    if not centered:
-        mask = np.fft.ifftshift(mask)
-    return mask
 
 
 def quadratic_fit(data):
@@ -112,19 +61,65 @@ def quadratic_fit(data):
     return x_max, y_max
 
 
-def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
+def distance_from_center(image, offset=np.zeros(2)):
+    (rows, cols) = image.shape
+    center_row, center_col = rows // 2 - offset[0], cols // 2 - offset[1]
+    y, x = np.ogrid[:rows, :cols]
+    distance = np.sqrt((x - center_col) ** 2 + (y - center_row) ** 2)
+    return distance
+
+
+def bandpass_filter(
+    image,
+    low=None,
+    high=None,
+    width=1,
+    centered=False,
+    cut_dc=True,
+    offset=np.zeros(2),
+    normalised=False,
+):
+    np.seterr(over="ignore")
+    r = distance_from_center(image, -offset)
+
+    with np.errstate(over="ignore"):
+        mask = np.ones_like(r)
+        if low is not None:
+            mask *= 1 / (1 + np.exp(-(low - r) / (width / 4)))
+        if high is not None:
+            mask *= 1 / (1 + np.exp(-(r - high) / (width / 4)))
+    if cut_dc:
+        mask[len(mask) // 2] = 0
+    if not centered:
+        mask = np.fft.ifftshift(mask)
+    if normalised:
+        mask /= np.sum(mask)
+    return mask
+
+
+def imshow_multiple(images, titles=None, circles=None, vrange=None, ncols=3):
     if titles is None:
         titles = [f"Image {i}" for i in range(len(images))]
     size = 5
-    n = len(images)
-    _, axes = plt.subplots(1, n, figsize=(n * size, size))
 
-    if n == 1:
-        axes = [axes]
+    if type(images) != list:
+        images = [images]
+
+    ncols = min(ncols, len(images))
+    nrows = np.ceil(len(images) / ncols).astype(int)
+
+    _, axes = plt.subplots(nrows, ncols=ncols, figsize=(ncols * size, nrows * size))
+
+    # Ensure axes is always a 2D array for consistent indexing
+    if nrows == 1:
+        axes = np.expand_dims(axes, axis=0)
+    if ncols == 1:
+        axes = np.expand_dims(axes, axis=1)
+    axes = axes.flatten()
+
     for i, (im, title) in enumerate(zip(images, titles)):
-
         rows, cols = im.shape
-        extent = [-cols // 2, cols // 2, -rows // 2, rows // 2]
+        extent = [-cols // 2, cols // 2 - 1, -rows // 2, rows // 2 - 1]
         im_plot = axes[i].imshow(im, cmap="gray", origin="lower", extent=extent)
         axes[i].set_title(title)
 
@@ -137,13 +132,16 @@ def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
         plt.colorbar(im_plot, cax=cax)
 
         try:
-            axes[i].scatter(*circles[i][:2], c="r", marker="+")
+            axes[i].scatter(*circles[i][:2], c="r", marker="+", s=5000)
             circle = plt.Circle(
                 circles[i][:2], radius=circles[i][-1], color="r", fill=False
             )
             axes[i].add_artist(circle)
         except (IndexError, TypeError):
             pass
+
+    for i in range(len(images), len(axes)):
+        axes[i].axis("off")
 
     plt.tight_layout()
     plt.show(block=False)
@@ -166,7 +164,38 @@ def imshow_multiple(images, titles=None, circles=None, radius=10, vrange=None):
     root.mainloop()
 
 
-def find_peak(image, centered=True):
+def find_peak1d(data, x, width=0.5, show=False):
+    # fit parabola to peak and yield maximum position
+    index = np.argmax(data)
+
+    selection = np.abs(x - x[index]) < width * 2
+    # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
+    weight = np.ones_like(x[selection])
+
+    poly = np.polyfit(x[selection], data[selection], 2, w=np.asarray(weight))
+    x_max = -poly[1] / (2 * poly[0])
+
+    if show:
+        plt.figure(figsize=(12, 3))
+        plt.plot(x, data, marker="o")
+        plt.vlines(x[index], 0, 1, color="r")
+        plt.vlines(x_max, 0, 1, color="g")
+
+        x_fit = np.linspace(x[selection][0], x[selection][-1], 100)
+        fit = np.polyval(poly, x_fit)
+        plt.plot(x_fit, fit)
+        plt.ylim([np.min(data), 1.3 * np.max(data)])
+
+        plt.plot(width)
+        plt.tight_layout(pad=2)
+        plt.xlabel("x")
+        plt.legend()
+        plt.show()
+
+    return x_max
+
+
+def find_peak2d(image, centered=True):
     max_index = np.argmax(image)
     max_indices = np.asarray(np.unravel_index(max_index, image.shape))
 
@@ -188,177 +217,216 @@ def find_peak(image, centered=True):
 
 
 def find_bead_center(image, centered=True, show=False):
-    mask = bandpass_filter(
-        image, high=15, low=25, width=2, centered=False, cut_offset=True
-    )
+    mask = bandpass_filter(image, high=15, low=25, width=2, centered=False, cut_dc=True)
     fft = mask * np.fft.fft2(image)
 
     cc = np.fft.fftshift(np.abs(np.fft.ifft2(fft**2))) / np.prod(image.shape)
-    peak = find_peak(cc)
+    peak = find_peak2d(cc)
     coords = peak / 2
 
     if show:
-        imshow_multiple([image, cc], circles=[[*coords, 15], [*peak, 5]])
+        imshow_multiple([image, cc], circles=[[*coords, 25], [*peak, 5]])
     if not centered:
         coords += np.asarray(image.shape) // 2
     return coords
 
 
-def get_z(image, z_ref, lut, mask, show=True):
-    fft = np.abs(np.fft.fftshift(np.fft.fft2(image))) * mask
-    fft /= np.sum(fft)
-    diff = np.asarray([np.sum(np.abs(l - fft) ** 0.5) for l in lut])
+def find_focus(lut, centers, show=False):
+    mask1 = bandpass_filter(
+        lut[0], high=10, low=20, width=0.5, centered=True, cut_dc=True, normalised=True
+    )
+    mask2 = bandpass_filter(
+        lut[0], high=10, low=30, width=0.5, centered=True, cut_dc=True, normalised=True
+    )
 
-    # diff = np.exp(-diff) ** 0.5
-    # diff /= np.sum(diff)
+    fft = [np.abs(np.fft.fftshift(np.abs(np.fft.fft2(im)))) for im in lut]
 
-    # fit parabola to peak and yield maximum position
-    width = 0.5
-    index = np.argmin(diff)
-    selection = np.abs(z_ref - z_ref[index]) < width * 2
-    # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
-    weight = np.ones_like(z_ref[selection])
+    width = [np.sum(mask2 * im) / np.sum(mask1 * im) for im in fft]
 
-    poly = np.polyfit(z_ref[selection], diff[selection], 2, w=np.asarray(weight))
-    new_z = -poly[1] / (2 * poly[0])
-
+    fft = [im * mask2 for im in fft]
     if show:
-        plt.plot(z_ref, diff, marker="o")
-        plt.vlines(z_ref[index], 0, 1, color="r")
-        plt.vlines(new_z, 0, 1, color="g")
-
-        x_fit = np.linspace(z_ref[selection][0], z_ref[selection][-1], 100)
-        fit = np.polyval(poly, x_fit)
-        plt.plot(x_fit, fit)
-        plt.ylim([0, 1.3 * np.max(diff)])
+        # imshow_multiple(
+        #     fft[::15],
+        #     ncols=4,
+        #     vrange=[0, 0.5],
+        #     circles=[[*c * 0, 25] for c in centers[::15]],
+        #     titles=[f"Width: {w:.2f}" for w in width],
+        # )
+        plt.figure(figsize=(12, 3))
+        plt.plot(width)
+        plt.tight_layout(pad=2)
+        plt.xlabel("z_lut")
+        plt.ylabel("z_new")
+        plt.legend()
         plt.show()
 
-    return new_z
+        find_peak1d(np.asarray(width), np.arange(len(width)), width=2, show=True)
 
 
-def create_lut(images, average=None):
-    mask = bandpass_filter(images[0], high=5, low=35, width=5, centered=True)
-    size = np.prod(images[0].shape)
-    lut = [np.abs(mask * np.fft.fftshift(np.fft.fft2(im))) / size for im in images]
-    lut = [l / np.sum(l) for l in lut]
-    if average is not None:
-        lut = [radial_average(l, step=average) for l in tqdm(lut, desc="Averaging LUT")]
-    return lut, mask
+class Tracker:
+    def __init__(self, filename=None):
 
+        def func(x, a, p, phi):
+            return a * np.sin(2 * np.pi * x / p + phi)
 
-def process_lut(z, images, show=False):
-    z_ref, lut, mask = create_lut(z, images, average=0.25)
+        if filename is None:
+            # Open file dialog to select a file
+            root = tk.Tk()
+            root.withdraw()  # Hide the root window
+            filename = tk.filedialog.askopenfilename(
+                title="Select a file",
+                filetypes=(("HDF5 files", "*.hdf5 *.h5"), ("All files", "*.*")),
+            )
+            if not filename:
+                raise ValueError("No file selected")
 
-    if show:
-        vmax = 10 / np.sum(np.prod(images[0].shape))
-        imshow_multiple([lut[10], lut[40], lut[-10]], vrange=[0, vmax])
+        # convert to um and correct for air-water interface
+        self.z_lut = hdf_data(filename).traces["Focus (mm)"].values * 1000 / 1.3333
 
-    image_nr = np.random.randint(0, len(images))
+        images = load_bin_file(filename)
+        self.mask = bandpass_filter(images[0], high=2, low=35, width=2.5, centered=True)
+        self.lut = self._create_lut(images, average=0.4)
 
-    new_z = get_z(images[image_nr].T, z_ref, lut, mask, show=True)
+        self.z_new = [self._get_z(im, show=False) for im in images]
 
-    return
+        sigma = np.diff(self.z_lut, prepend=0)
+        sigma = np.abs(sigma - np.max(sigma))
 
-    z = [get_z(im, z_ref, lut, mask) for im in images]
-    plt.plot(z_ref, z)
+        x = self.z_lut[60:90]
+        y = x - self.z_new[60:90]
+        # Fit the function to the data
+        popt, pcov = curve_fit(func, x, y, p0=[0.2, 2, 0])
+        a, p, phi = popt
 
-    plt.show
+        if False:
+            # Plot the data and the fit
+            plt.figure(figsize=(12, 3))
+            plt.plot(
+                self.z_lut,
+                self.z_lut - self.z_new - func(self.z_lut, *popt),
+                "o-",
+                label="Data",
+            )
+            plt.hlines(0, self.z_lut[0], self.z_lut[-1], color="k")
+            plt.xlim([self.z_lut[0], self.z_lut[-1]])
+            plt.ylim([-0.5, 0.5])
+            plt.tight_layout(pad=2)
+            plt.xlabel("z_lut")
+            plt.ylabel("z_new")
+            plt.legend()
+            plt.show()
 
-    # imange_nr = np.random.randint(0, len(images))
+        centers = [
+            find_bead_center(image, centered=True, show=False) for image in images
+        ]
 
-    # diff = np.asarray([np.sum((l - lut[imange_nr].T) ** 2) for l in lut])
-    # diff = np.exp(-(diff**3))
-    # diff /= np.sum(diff)
-    # plt.plot(z, diff, marker="o")
-    # plt.vlines(z[imange_nr], 0, 0.25, color="r")
-    # plt.show()
+        find_focus(images, centers, show=True)
 
-    return lut
+    def _create_lut(self, images, average=None):
+        lut = [self.mask * np.fft.fftshift(np.abs(np.fft.fft2(im))) for im in images]
+        lut = [l / np.sum(l) for l in lut]
 
+        if average is not None:
+            masks = None
+            for i, l in enumerate(tqdm(lut, desc="Averaging LUT")):
+                lut[i], masks = self._radial_average(l, masks, step=average)
+        return lut
 
-def test():
-    size = 100
-    dist = distance_from_center(np.zeros((size, size)), offset=[0, 0])
+    def _radial_average(self, image, masks=None, step=0.25, show=False):
+        mean_image = np.zeros_like(image)
 
-    p = 3
+        if masks is None:
+            masks = [
+                bandpass_filter(
+                    image,
+                    high=r - step / 2,
+                    low=r + step / 2,
+                    width=step,
+                    centered=True,
+                    cut_dc=False,
+                )
+                for r in np.arange(0, np.min(image.shape[-1]) // 2, step)
+            ]
 
-    im = np.cos(dist * 2 * np.pi / p)
+        for mask in masks:
+            mean_image += mask * (np.sum(mask * image) / np.sum(mask))
 
-    im *= bandpass_filter(
-        im, high=5, low=size / 3, width=20, centered=True, cut_offset=False
-    )
+        if show:
+            imshow_multiple(
+                [image, mean_image],
+                titles=["Image", "Mean image"],
+                vrange=[0, 5 / np.prod(image.shape)],
+            )
+        return mean_image, masks
 
-    fft = np.fft.fftshift(np.fft.fft2(im))
-    phase = np.angle(fft)
-    phase *= bandpass_filter(
-        phase, high=size / p, low=size / p, width=2, centered=True, cut_offset=False
-    )
-    # imshow_multiple([im, np.abs(fft), phase], titles=["Image", "FFT", "Phase"])
-
-    amplitude = np.zeros_like(im)
-    p = size / 10
-    # for p in range(15, 30, 5):
-    for p in np.random.random(5):
-        p += 15 * p + 10
-        amplitude += bandpass_filter(
-            amplitude, high=p, low=p, width=1, centered=True, cut_offset=False
+    def _get_z(self, image, show=None):
+        fft = np.fft.fftshift(np.abs(np.fft.fft2(image))) * self.mask
+        fft /= np.sum(fft)
+        diff = np.asarray(
+            [np.sum(np.abs(self.mask * (l - fft))) ** 0.5 for l in self.lut]
         )
 
-    phase = np.angle(np.cos(dist * 2 * np.pi / p))
-    phase = np.zeros_like(amplitude)
+        if show:
+            imshow_multiple(
+                [fft, self.lut[show], self.mask * np.abs(fft - self.lut[show])],
+                vrange=[0, np.max(fft)],
+            )
 
-    # Define the shift (in pixels)
-    shift_x, shift_y = 45, -40
+        # fit parabola to peak and yield maximum position
+        width = 0.5
+        index = np.argmin(diff)
 
-    # Create a linear phase shift
-    rows, cols = amplitude.shape
-    x = np.fft.fftfreq(cols) * cols
-    y = np.fft.fftfreq(rows) * rows
-    X, Y = np.meshgrid(x, y)
-    phase_shift = 2 * np.pi * (shift_x * X / cols + shift_y * Y / rows)
+        selection = np.abs(self.z_lut - self.z_lut[index]) < width * 2
+        # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
+        weight = np.ones_like(self.z_lut[selection])
 
-    # Add the phase shift to the original phase
-    phase += phase_shift
+        poly = np.polyfit(
+            self.z_lut[selection], diff[selection], 2, w=np.asarray(weight)
+        )
+        new_z = -poly[1] / (2 * poly[0])
 
-    # phase = np.angle(np.exp(1j * phase))
+        if show:
+            plt.plot(self.z_lut, diff, marker="o")
+            plt.vlines(self.z_lut[index], 0, 1, color="r")
+            plt.vlines(new_z, 0, 1, color="g")
 
-    amplitude *= bandpass_filter(
-        amplitude, high=1, low=35, width=15, centered=True, cut_offset=False
-    )
+            x_fit = np.linspace(
+                self.z_lut[selection][0], self.z_lut[selection][-1], 100
+            )
+            fit = np.polyval(poly, x_fit)
+            plt.plot(x_fit, fit)
+            plt.ylim([0, 1.3 * np.max(diff)])
+            plt.show()
 
-    # Combine amplitude and phase into a complex image
-    complex_image = amplitude * np.exp(1j * phase)
-
-    # Perform inverse FFT to get the spatial domain image
-    spatial_image = np.fft.ifft2(np.fft.ifftshift(complex_image)).real
-
-    phase = np.fft.ifftshift(phase)
-    imshow_multiple(
-        [amplitude, phase, spatial_image],
-        titles=["Amplitude", "Phase", "Spatial Image"],
-    )
+        return new_z
 
 
 if __name__ == "__main__":
-    test()
-    # print("This is a module, not a standalone script.")
-    filename = r"d:\users\noort\data\20241211\data_153.hdf"
-    # filename = r"d:\users\noort\data\20241212\data_006.hdf"
-    frames = load_bin_file(filename)
-    data = hdf_data(filename)
+    filename = r"data\data_006.hdf"
+    # filename = r"data\data_153.hdf"
+    tracker = Tracker(filename)
+    # test2(filename)
 
-    # z = data.traces["Focus (mm)"].values * 1000
-    # lut, mask = create_lut(frames, average=0.25)
+    if False:
+        # test()
+        # print("This is a module, not a standalone script.")
+        filename = r"d:\users\noort\data\20241211\data_153.hdf"
+        # filename = r"d:\users\noort\data\20241212\data_006.hdf"
+        frames = load_bin_file(filename)
+        data = hdf_data(filename)
 
-    # z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
-    # z = np.asarray(z_new)
-    # z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
+        z = data.traces["Focus (mm)"].values * 1000
+        lut, mask = create_lut(frames, average=0.25)
 
-    poly = np.polyfit(z, z_new, 1)
-    fit = np.polyval(poly, z)
+        z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
+        z = np.asarray(z_new)
+        z_new = [get_z(im, z, lut, mask, show=False) for im in frames]
 
-    plt.plot(z, z_new - fit, marker="o")
-    plt.show()
+        poly = np.polyfit(z, z_new, 1)
+        fit = np.polyval(poly, z)
+
+        plt.plot(z, z_new - fit, marker="o")
+        plt.show()
 
     # test(z, frames)
 
