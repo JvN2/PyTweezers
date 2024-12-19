@@ -106,11 +106,11 @@ class MainApp:
         if len(self.settings["rois"]) == 0:
             messagebox.showinfo("Error", "No ROIs defined")
             return
-        range = 0.04
+        range = 0.06
         gcode = [
             "G91",
             "G93 S0.1",
-            f"G1 Z{range:.3f} F0.5",
+            f"G1 Z{range:.3f} F0.1",
             "G4 S0.25",
             "G93",
             f"G1 Z-{range:.3f} F10",

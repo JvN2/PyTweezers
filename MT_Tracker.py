@@ -110,8 +110,13 @@ def imshow_multiple(images, titles=None, circles=None, vrange=None, ncols=3):
         titles = [f"Image {i}" for i in range(len(images))]
     size = 5
 
-    if type(images) != list:
-        images = [images]
+    if type(images) is list:
+        try:
+            images = np.asarray(images)
+            if images.ndim == 2:
+                images = [images]
+        except ValueError:
+            pass
 
     ncols = min(ncols, len(images))
     nrows = np.ceil(len(images) / ncols).astype(int)
@@ -178,32 +183,27 @@ def imshow_multiple(images, titles=None, circles=None, vrange=None, ncols=3):
     root.mainloop()
 
 
-def find_peak1d(data, x, width=0.5, show=False):
+def find_peak1d(y, x, width=0.5, show=False):
     # fit parabola to peak and yield maximum position
-    index = np.argmax(data)
-
-    selection = np.abs(x - x[index]) < width * 2
-    # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
-    weight = np.ones_like(x[selection])
-
-    poly = np.polyfit(x[selection], data[selection], 2, w=np.asarray(weight))
+    max_index = np.argmax(y)
+    weight = np.exp(-((x[max_index] - x) ** 2) / width**2)
+    selection = weight > 0.01
+    poly = np.polyfit(x[selection], y[selection], 2, w=weight[selection])
     x_max = -poly[1] / (2 * poly[0])
 
     if show:
         plt.figure(figsize=(12, 3))
-        plt.plot(x, data, marker="o")
-        plt.vlines(x[index], 0, 1, color="r")
-        plt.vlines(x_max, 0, 1, color="g")
-
+        plt.plot(x, y, marker="o", color="blue", alpha=0.3, linestyle="None")
         x_fit = np.linspace(x[selection][0], x[selection][-1], 100)
         fit = np.polyval(poly, x_fit)
-        plt.plot(x_fit, fit)
-        plt.ylim([np.min(data), 1.3 * np.max(data)])
+        plt.plot(x_fit, fit, color="blue")
+        plt.ylim([1.2 * np.min(y), 1.2 * np.max(y)])
+        plt.xlim([x[0], x[-1]])
 
         plt.plot(width)
         plt.tight_layout(pad=2)
         plt.xlabel("x")
-        plt.legend()
+        plt.ylabel("y")
         plt.show()
 
     return x_max
@@ -248,7 +248,7 @@ def find_bead_center(image, fft_mask, show=False):
     return coords
 
 
-def find_focus(lut, centers, spatial=True, show=False):
+def find_focus(lut, z, centers, spatial=True, show=False):
     if not spatial:  # Use FFT to find focus
         mask1 = bandpass_filter(
             lut[0],
@@ -306,15 +306,25 @@ def find_focus(lut, centers, spatial=True, show=False):
                 / (np.sum(mask2 * im) + np.sum(mask1 * im))
             )
 
-    x = find_peak1d(np.asarray(width), np.arange(len(width)), width=2, show=show)
+    z_range = 0.5
+    z_focus = find_peak1d(np.asarray(width), z, width=z_range, show=show)
 
     if show:
-        imshow_multiple(
-            [lut[int(x - 5)], lut[int(x)], lut[int(x + 5)]],
-            titles=["focus -5", "focus", "focus +5"],
-        )
+        z_ranges = [-z_range, 0, z_range]
 
-    return x
+        indices_to_display = [
+            np.argmin((z - z_focus - z_step) ** 2) for z_step in z_ranges
+        ]
+
+        titles = [
+            f"focus -{z_ranges[-1]} um",
+            f"focus = {z_focus:.2f} um",
+            f"focus +{z_ranges[-1]} um",
+        ]
+
+        imshow_multiple(lut[indices_to_display], titles=titles)
+
+    return z_focus
 
 
 def find_modulation(y, x, show=False):
@@ -378,39 +388,52 @@ class Tracker:
                 raise ValueError("No file selected")
 
         # convert to um and correct for air-water interface
-        self.z_lut = hdf_data(filename).traces["Focus (mm)"].values * 1000 / 1.3333
-        z_old = self.z_lut
+
+        focus = hdf_data(filename).traces["Focus (mm)"].values
+        t = hdf_data(filename).traces["Time (s)"].values
+        dt = np.diff(t, prepend=0)
+        fit = np.polyval(np.polyfit(t, focus, 1), t)
+
+        fit = np.median(np.diff(fit) / np.diff(t)) * dt + fit[0]
+
+        plt.figure(figsize=(12, 3))
+        plt.plot(
+            t,
+            np.diff(focus, prepend=0) / np.diff(t, prepend=0),
+            marker="o",
+            label="z_lut",
+            color="blue",
+            alpha=0.3,
+        )
+        plt.plot(
+            t,
+            np.diff(fit, prepend=0) / np.diff(t, prepend=0),
+            label="fit",
+            color="black",
+        )
+        # range = np.asarray([-0.25, 0.25]) + np.mean(s)
+        # plt.ylim(range)
+        plt.show()
+
+        self.z_lut = fit * 1000 / 1.3333
 
         images = load_bin_file(filename)
         self.mask = bandpass_filter(images[0], high=2, low=35, width=2.5, centered=True)
 
         self.lut = self._create_lut(images, average=None)
-        # self.lut = [l.T for l in self.lut]
-        self._resample_lut(dz=0.3, show=False)
-
-        z_new = np.asarray([self._get_z(im, show=False) for im in images])
-
-        plt.figure(figsize=(12, 3))
-        plt.plot(np.diff(z_new), label="bead", marker="o", color="blue", alpha=0.3)
-        plt.plot(np.diff(z_old), label="stepper", marker="o", color="red", alpha=0.3)
-
-        offset = np.percentile(np.diff(z_old), 50)
-        plt.ylim(offset - 0.5, offset + 0.5)
-        plt.xlabel("Frame")
-        plt.ylabel("dz (um)")
-        plt.legend()
-        plt.tight_layout(pad=2)
-
-        plt.show()
 
         mask = bandpass_filter(
             images[0], high=15, low=25, width=2, centered=False, cut_dc=True
         )
         centers = [find_bead_center(image, mask, show=False) for image in images]
 
-        i_focus = find_focus(images, centers, spatial=False, show=False)
-        print(f"Focus: {self.z_lut[int(i_focus)]:.2f} um")
-        z_correction = find_modulation(z_new - z_old, z_new, show=True)
+        z_focus = find_focus(images, self.z_lut, centers, spatial=False, show=True)
+
+        # z_correction = find_modulation(z_new - z_old, z_new, show=True)
+
+        resample = True
+        if resample:
+            self._resample_lut(dz=0.5, show=True)
 
     def _create_lut(self, images, average=None):
         lut = [self.mask * np.fft.fftshift(np.abs(np.fft.fft2(im))) for im in images]
@@ -423,22 +446,28 @@ class Tracker:
         return np.asarray(lut)
 
     def _resample_lut(self, dz=0.3, show=False):
-        # resample lut to z_new
+        # Resample lut to z_new
         z_new = np.arange(np.min(self.z_lut), np.max(self.z_lut), dz)
 
         new_lut = []
         for z in z_new:
             weight = np.exp(-(((self.z_lut - z) / dz) ** 2))
             weight /= np.sum(weight)
-            lut = np.sum([l * w for l, w in zip(self.lut, weight)], axis=0)
+            lut = np.sum(self.lut * weight[:, np.newaxis, np.newaxis], axis=0)
             new_lut.append(lut / np.sum(lut))
 
         new_lut = np.asarray(new_lut)
+
         if show:
-            ims = [self.lut[:, :, 50], new_lut[:, :, 50]]
+            width = new_lut.shape[-1] // 2
+            ims = [self.lut[:, :, width], new_lut[:, :, width]]
             imshow_multiple(
-                ims, titles=["original", "resampled"], ncols=2, vrange=[0, 0.002]
+                ims,
+                titles=["original", "resampled"],
+                ncols=2,
+                vrange=[0, 2 * np.percentile(ims[-1], 95)],
             )
+
         self.lut = new_lut
         self.z_lut = z_new
 
@@ -513,7 +542,8 @@ class Tracker:
 
 if __name__ == "__main__":
     filename = r"data\data_006.hdf"
-    filename = r"data\data_153.hdf"
+    # filename = r"data\data_153.hdf"
+    filename = r"d:\users\noort\data\20241219\data_001.hdf"
     tracker = Tracker(filename)
     # test2(filename)
 
