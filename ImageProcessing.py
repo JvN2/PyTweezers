@@ -248,7 +248,10 @@ class FrameConsumer:
 
                 # extract selected roi and save it
                 if process_frames:
-                    if self.settings.get("_aquisition mode") == "calibrate":
+                    if self.settings.get("_aquisition mode") in [
+                        "calibrate",
+                        "measure",
+                    ]:
                         (roi, _, _) = get_subarray(
                             cv_images,
                             self.settings["rois"][self.settings["selected"]],

@@ -104,7 +104,7 @@ def to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"], start_position=np.ze
             else:
                 logging = False
 
-        elif gcode[0] == "G1":
+        elif gcode[0] == "G1" and logging:
 
             axis = gcode[1][0]
             end_position = float(gcode[1][1:])
@@ -138,6 +138,7 @@ def to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"], start_position=np.ze
 
         elif gcode[0] == "G91":
             relative_move = True
+
         elif gcode[0] == "G90":
             relative_move = False
 
@@ -232,7 +233,7 @@ class StepperApplication(threading.Thread):
         self.send_gcode("M114")
         while self.current_position is None:
             time.sleep(0.1)
-        return list(self.current_position.values())
+        return np.asarray(list(self.current_position.values()))
 
 
 def update_plot(frame, stepper_app, lines):
