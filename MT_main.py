@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from AlliedVision import CameraApplication
 from TraceIO import increment_filename, create_hdf
-from MT_steppers import StepperApplication, to_gcode
+from MT_steppers import StepperApplication, to_gcode, to_profile
 from MT_settings import SettingsEditor
 
 SHIFT_KEY = 0x0001
@@ -116,6 +116,21 @@ class MainApp:
             f"G1 Z-{range:.3f} F10",
             "G90",
         ]
+
+        self.settings["_profile"] = to_profile(
+            gcode, start_position=self.stepper_app.get_current_position()
+        )
+        self.ax.clear()
+        self.settings["_profile"].plot(
+            ax=self.ax, linestyle="--", legend=False, color="lightgray"
+        )
+
+        self.ax.set_ylabel("Focus (mm)")
+        self.ax.set_xlabel("Time (s)")
+        self.settings["_trajectory"] = {"axis": "Focus (mm)"}
+        self.fig.tight_layout()
+        self.canvas.draw()
+
         self.settings["_aquisition mode"] = "calibrate"
         self.settings["_filename"] = increment_filename()
         self.stepper_app.command_queue.put(gcode)
@@ -138,6 +153,20 @@ class MainApp:
         self.root.wait_window(settings_editor)
         if settings_editor.settings:
             self.settings["_trajectory"] = settings_editor.settings
+            gcode = to_gcode(self.settings["_trajectory"])
+            self.settings["_profile"] = to_profile(
+                gcode, start_position=self.stepper_app.get_current_position()
+            )
+
+            self.ax.clear()
+            self.settings["_profile"].plot(
+                ax=self.ax, linestyle="--", legend=False, color="lightgray"
+            )
+
+            self.ax.set_ylabel(self.settings["_trajectory"]["axis"])
+            self.ax.set_xlabel("Time (s)")
+            self.fig.tight_layout()
+            self.canvas.draw()
 
     def go_trajectory(self):
         if self.settings["_trajectory"]:
@@ -186,19 +215,25 @@ class MainApp:
         # ic(df)
         # plt.plot(df["Z"])
         # plt.show()
-        create_hdf(self.settings["_filename"])
+        # create_hdf(self.settings["_filename"])
+        print(self.stepper_app.get_current_position())
 
     def update_plot(self):
         stepper_df = self.stepper_app.get_dataframe()
         if not stepper_df.empty:
-            label = "Focus (mm)"
             self.ax.clear()
-            stepper_df[label].plot(ax=self.ax)
+
+            label = self.settings["_trajectory"]["axis"]
+            self.settings["_profile"].plot(
+                ax=self.ax, linestyle="--", legend=False, color="lightgray"
+            )
+            stepper_df[label].plot(ax=self.ax, legend=False, color="blue")
             self.ax.set_ylabel(label)
             self.fig.tight_layout()
             self.canvas.draw()
 
             if self.settings["_aquisition mode"] == "idle":
+                print("Saving ....")
                 create_hdf(self.settings, stepper_df, traces=self.settings["_traces"])
                 self.stepper_app.clear_dataframe()
 

@@ -19,6 +19,19 @@ import threading
 import time
 
 
+def gausian_filter(y, sigma, x=None):
+
+    def mask(x, sigma):
+        mask = np.exp(-(x**2) / (2 * sigma**2))
+        return mask / np.sum(mask)
+
+    if x is None:
+        x = np.arange(len(y))
+
+    y = [np.sum(mask(x - i, sigma) * y) for i in x]
+    return np.asarray(y)
+
+
 def show_frames(frames, circles=None):
     window_name = "Frames"
     cv2.namedWindow(window_name, cv2.WINDOW_KEEPRATIO)
@@ -105,7 +118,15 @@ def filter_image(image, low=None, high=None, width=1):
     return np.real(im)
 
 
-def imshow_multiple(images, titles=None, circles=None, vrange=None, ncols=3):
+def imshow_multiple(
+    images,
+    titles=None,
+    circles=None,
+    vrange=None,
+    ncols=3,
+    x_extent=None,
+    y_extent=None,
+):
     if titles is None:
         titles = [f"Image {i}" for i in range(len(images))]
     size = 5
@@ -133,6 +154,10 @@ def imshow_multiple(images, titles=None, circles=None, vrange=None, ncols=3):
     for i, (im, title) in enumerate(zip(images, titles)):
         rows, cols = im.shape
         extent = [-cols // 2, cols // 2 - 1, -rows // 2, rows // 2 - 1]
+        if x_extent is not None:
+            extent[:1] = x_extent
+        if y_extent is not None:
+            extent[2:] = y_extent
         im_plot = axes[i].imshow(im, cmap="gray", origin="lower", extent=extent)
         axes[i].set_title(title)
 
@@ -231,9 +256,9 @@ def find_peak2d(image, centered=True):
 
 
 def find_bead_center(image, fft_mask, show=False):
-    fft = fft_mask * np.fft.fft2(image)
-    autocorrelation = np.fft.fftshift(np.abs(np.fft.ifft2(fft**2))) / np.prod(
-        image.shape
+    fft = fft_mask * np.fft.fftshift(np.fft.fft2(image))
+    autocorrelation = np.fft.ifftshift(
+        np.abs(np.fft.ifft2(fft**2)) / np.prod(image.shape)
     )
     peak = find_peak2d(autocorrelation)
     coords = peak / 2
@@ -248,66 +273,45 @@ def find_bead_center(image, fft_mask, show=False):
     return coords
 
 
-def find_focus(lut, z, centers, spatial=True, show=False):
-    if not spatial:  # Use FFT to find focus
-        mask1 = bandpass_filter(
-            lut[0],
-            high=10,
-            low=20,
-            width=0.5,
-            centered=True,
-            cut_dc=True,
-            normalised=True,
-        )
-        mask2 = bandpass_filter(
-            lut[0],
-            high=10,
-            low=30,
-            width=0.5,
-            centered=True,
-            cut_dc=True,
-            normalised=True,
-        )
+def find_focus(lut, z, show=False):
+    mask1 = bandpass_filter(
+        lut[0],
+        high=10,
+        low=20,
+        width=0.5,
+        centered=True,
+        cut_dc=True,
+        normalised=True,
+    )
+    mask2 = bandpass_filter(
+        lut[0],
+        high=10,
+        low=30,
+        width=0.5,
+        centered=True,
+        cut_dc=True,
+        normalised=True,
+    )
 
-        fft = [np.abs(np.fft.fftshift(np.abs(np.fft.fft2(im)))) for im in lut]
-        width = [
-            (np.sum(mask2 * im) - np.sum(mask1 * im))
-            / (np.sum(mask2 * im) + np.sum(mask1 * im))
-            for im in fft
-        ]
-
-    else:  # Use spatial image to find focus
-        width = []
-        for im, c in zip(lut, centers):
-            im = np.abs(filter_image(im, low=10, high=30, width=1))
-
-            mask1 = bandpass_filter(
-                im,
-                high=10,
-                low=30,
-                width=0.5,
-                offset=-c,
-                cut_dc=True,
-                normalised=True,
-                centered=True,
-            )
-            mask2 = bandpass_filter(
-                im,
-                high=0,
-                low=10,
-                width=0.5,
-                offset=-c,
-                cut_dc=True,
-                normalised=True,
-                centered=True,
-            )
-            width.append(
-                (np.sum(mask2 * im) - np.sum(mask1 * im))
-                / (np.sum(mask2 * im) + np.sum(mask1 * im))
-            )
+    fft = [np.abs(np.fft.fftshift(np.abs(np.fft.fft2(im)))) for im in lut]
+    width = [
+        (np.sum(mask2 * im) - np.sum(mask1 * im))
+        / (np.sum(mask2 * im) + np.sum(mask1 * im))
+        for im in fft
+    ]
 
     z_range = 0.5
-    z_focus = find_peak1d(np.asarray(width), z, width=z_range, show=show)
+    z_focus = find_peak1d(-np.asarray(width), z, width=z_range, show=show)
+
+    mask3 = bandpass_filter(
+        lut[0],
+        high=8,
+        low=35,
+        width=1,
+        centered=False,
+        cut_dc=True,
+        normalised=True,
+    )
 
     if show:
         z_ranges = [-z_range, 0, z_range]
@@ -373,9 +377,6 @@ def find_modulation(y, x, show=False):
 class Tracker:
     def __init__(self, filename=None):
 
-        def func(x, a, p, phi):
-            return a * np.sin(2 * np.pi * x / p + phi)
-
         if filename is None:
             # Open file dialog to select a file
             root = tk.Tk()
@@ -387,47 +388,25 @@ class Tracker:
             if not filename:
                 raise ValueError("No file selected")
 
-        # convert to um and correct for air-water interface
-
+        # correct focus for recording errors and refractive index
         focus = hdf_data(filename).traces["Focus (mm)"].values
         t = hdf_data(filename).traces["Time (s)"].values
-        dt = np.diff(t, prepend=0)
         fit = np.polyval(np.polyfit(t, focus, 1), t)
-
-        fit = np.median(np.diff(fit) / np.diff(t)) * dt + fit[0]
-
-        plt.figure(figsize=(12, 3))
-        plt.plot(
-            t,
-            np.diff(focus, prepend=0) / np.diff(t, prepend=0),
-            marker="o",
-            label="z_lut",
-            color="blue",
-            alpha=0.3,
-        )
-        plt.plot(
-            t,
-            np.diff(fit, prepend=0) / np.diff(t, prepend=0),
-            label="fit",
-            color="black",
-        )
-        # range = np.asarray([-0.25, 0.25]) + np.mean(s)
-        # plt.ylim(range)
-        plt.show()
-
         self.z_lut = fit * 1000 / 1.3333
 
         images = load_bin_file(filename)
         self.mask = bandpass_filter(images[0], high=2, low=35, width=2.5, centered=True)
 
         self.lut = self._create_lut(images, average=None)
+        self.z_lut -= find_focus(images, self.z_lut, show=False)
 
-        mask = bandpass_filter(
-            images[0], high=15, low=25, width=2, centered=False, cut_dc=True
-        )
-        centers = [find_bead_center(image, mask, show=False) for image in images]
+        # mask = bandpass_filter(
+        #     images[0], high=15, low=25, width=2, centered=False, cut_dc=True
+        # )
+        # centers = [find_bead_center(image, self.mask, show=False) for image in images]
 
-        z_focus = find_focus(images, self.z_lut, centers, spatial=False, show=True)
+        i_focus = np.argmin(np.abs(self.z_lut))
+        find_bead_center(images[i_focus], self.mask, show=False)
 
         # z_correction = find_modulation(z_new - z_old, z_new, show=True)
 
@@ -461,12 +440,49 @@ class Tracker:
         if show:
             width = new_lut.shape[-1] // 2
             ims = [self.lut[:, :, width], new_lut[:, :, width]]
+
             imshow_multiple(
                 ims,
                 titles=["original", "resampled"],
-                ncols=2,
-                vrange=[0, 2 * np.percentile(ims[-1], 95)],
+                ncols=3,
+                vrange=[0, 1 * np.percentile(ims[-1], 95)],
+                y_extent=[self.z_lut[0], self.z_lut[-1]],
             )
+
+            plt.figure(figsize=(12, 3))
+
+            mask1 = bandpass_filter(
+                new_lut[0],
+                high=30,
+                low=40,
+                width=1,
+                centered=True,
+                cut_dc=False,
+                normalised=True,
+            )
+            mask2 = bandpass_filter(
+                new_lut[0],
+                high=15,
+                low=40,
+                width=1,
+                centered=True,
+                cut_dc=False,
+                normalised=True,
+            )
+
+            diff_lut = [np.sum(mask1 * im) / np.sum(mask2 * im) for im in self.lut]
+
+            x = self.z_lut
+            plt.plot(
+                x,
+                diff_lut,
+                marker="o",
+                color="blue",
+                alpha=0.3,
+                linestyle="None",
+            )
+            plt.plot(x, gausian_filter(diff_lut, dz, x=x), color="black")
+            plt.show()
 
         self.lut = new_lut
         self.z_lut = z_new
@@ -543,7 +559,8 @@ class Tracker:
 if __name__ == "__main__":
     filename = r"data\data_006.hdf"
     # filename = r"data\data_153.hdf"
-    filename = r"d:\users\noort\data\20241219\data_001.hdf"
+    # filename = r"d:\users\noort\data\20241219\data_002.hdf"
+    filename = r"d:\users\noort\data\20241220\data_003.hdf"
     tracker = Tracker(filename)
     # test2(filename)
 
