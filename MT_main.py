@@ -85,7 +85,7 @@ class MainApp:
         self.settings["_traces"] = None
 
     def start_camera(self):
-        self.camera_app = CameraApplication(settings=self.settings)
+        self.camera_app = CameraApplication(settings=self.settings, root=self.root)
         threading.Thread(target=self.camera_app.run).start()
 
     def stop_camera(self):

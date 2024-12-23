@@ -177,12 +177,13 @@ def extract_rois(frame: np.ndarray, settings=None) -> np.ndarray:
 
 
 class FrameConsumer:
-    def __init__(self, frame_queue: queue.Queue, settings: dict):
+    def __init__(self, frame_queue: queue.Queue, settings: dict, root=None):
         self.frame_queue = frame_queue
         self.quit = False
         self.settings = settings
         self.selected_roi = []
         self.traces = []
+        self.main_root = root
 
     def run(self):
         IMAGE_CAPTION = "MT camera"
@@ -350,10 +351,13 @@ class FrameConsumer:
             dist = np.abs(
                 np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
             )
-            in_roi = np.all((dist < roi_size // 2), axis=1)
-            index = np.where(in_roi)[0]
-            if len(index) > 0:
-                self.settings["selected"] = index[0]
+            try:
+                in_roi = np.all((dist < roi_size // 2), axis=1)
+                index = np.where(in_roi)[0]
+                if len(index) > 0:
+                    self.settings["selected"] = index[0]
+            except IndexError:
+                pass  # no rois defined
 
         if event == cv2.EVENT_MOUSEWHEEL:
             zoom = 1.25
@@ -365,6 +369,8 @@ class FrameConsumer:
                 self.settings["fov_size (pix)"] = max(
                     int(self.settings["fov_size (pix)"] / zoom), 16
                 )
+
+        self.main_root.focus_force()
 
     def save_frames_to_binary_file(self, filename: str):
         with open(filename, "wb") as f:
