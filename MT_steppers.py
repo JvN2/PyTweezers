@@ -8,26 +8,46 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from icecream import ic
+from tkinter import messagebox
 import queue
 
-###### to do: insert the case that logging starts later than the first line of the gcode
+
+def to_axis(axis):
+    if axis == "X (mm)":
+        return "X", 0
+    elif axis == "Y (mm)":
+        return "Y", 1
+    elif axis == "Focus (mm)":
+        return "Z", 2
+    elif axis == "Shift (mm)":
+        return "A", 3
+    elif axis == "Rotations (turns)":
+        return "B", 4
+    else:
+        return None
 
 
-def to_gcode(trajectory):
+def to_gcode(trajectory, start_position=np.zeros(5)):
 
     gcode = []
-    axis = trajectory["axis"][0]
+    axis, index = to_axis(trajectory["axis"])
     velocity = (
         np.abs(trajectory["target"] - trajectory["start"]) / trajectory["move (s)"]
     )
+    start = float(trajectory["start"])
+    target = float(trajectory["target"])
 
-    gcode.append(f"G1 {axis}{trajectory['start']} F1000")
+    if trajectory["relative"] == "True":
+        start += start_position[index]
+        target += start_position[index]
+
+    gcode.append(f"G1 {axis}{start:.3f} F1000")
     gcode.append(f"G93 S0.1")
     for i in range(trajectory["repeat"]):
         gcode.append(f"G4 S{trajectory['wait (s)']}")
-        gcode.append(f"G1 {axis}{trajectory['target']} F{velocity*60}")
+        gcode.append(f"G1 {axis}{target:.3f} F{velocity*60}")
         gcode.append(f"G4 S{trajectory['dwell (s)']}")
-        gcode.append(f"G1 {axis}{trajectory['start']} F{velocity*60}")
+        gcode.append(f"G1 {axis}{start:.3f} F{velocity*60}")
         gcode.append(f"G4 S{trajectory['wait (s)']}")
     gcode.append(f"G93")
 
@@ -85,11 +105,12 @@ def to_section(x0, xe, v=30, t0=0, v0=0, ve=0, dt=0.01, a=5, vmax=3, axis="X"):
     return df
 
 
-def to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"], start_position=np.zeros(5)):
+def to_profile(gcodes, axes=["X", "Y", "Z", "A", "B"], a=5):
 
     dt = None
     logging = False
     relative_move = False
+    start_position = np.zeros(5)
 
     for line in gcodes:
         gcode = line.upper().split()
@@ -104,30 +125,35 @@ def to_profile(gcodes, a=8, axes=["X", "Y", "Z", "A", "B"], start_position=np.ze
             else:
                 logging = False
 
-        elif gcode[0] == "G1" and logging:
-
+        elif gcode[0] == "G1":
             axis = gcode[1][0]
             end_position = float(gcode[1][1:])
-            start_position = df.iloc[-1][axis]
 
             if relative_move:
-                start_position = df.iloc[-1][axis]
-                end_position += start_position
+                end_position += start_position[axes.index(axis)]
 
-            start_time = df["t"].max()
-            try:
-                velocity = float(gcode[2][1:]) / 60
-            except IndexError:
-                velocity = 1000
+            if logging:
+                start_time = df["t"].max()
+                try:
+                    velocity = float(gcode[2][1:]) / 60
+                except IndexError:
+                    velocity = 1000
 
-            df1 = to_section(
-                start_position, end_position, velocity, start_time, axis=axis, dt=dt
-            )
+                df1 = to_section(
+                    start_position[axes.index(axis)],
+                    end_position,
+                    velocity,
+                    start_time,
+                    axis=axis,
+                    dt=dt,
+                )
 
-            for col in df.columns:
-                if col not in df1.columns:
-                    df1[col] = df[col].iloc[-1]
-            df = pd.concat([df, df1], axis=0, ignore_index=True)
+                for col in df.columns:
+                    if col not in df1.columns:
+                        df1[col] = df[col].iloc[-1]
+                df = pd.concat([df, df1], axis=0, ignore_index=True)
+
+            start_position[axes.index(axis)] = end_position
 
         elif gcode[0] == "G4" and logging:
             df.loc[len(df)] = df.iloc[-1].values.copy()
@@ -168,6 +194,7 @@ class StepperApplication(threading.Thread):
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
         time.sleep(2)  # Wait for the connection to establish
+        self.command_queue.put("G93 N0")  # Get current position
 
     def disconnect(self):
         if self.serial_connection and self.serial_connection.is_open:
@@ -199,8 +226,8 @@ class StepperApplication(threading.Thread):
             if response[:4] == "log:":
                 data = response[4:].split()
                 try:
-                    data = [float(x) for x in data]
-                    self.df.loc[data[0]] = data[1:]
+                    self.current_position = [float(x) for x in data]
+                    self.df.loc[self.current_position[0]] = self.current_position[1:]
                 except:
                     data = [
                         "Time (s)",
@@ -215,6 +242,9 @@ class StepperApplication(threading.Thread):
             elif response[:2] == "X:":
                 tmp = response.split(" ")
                 self.current_position = {x[0]: float(x[2:]) for x in tmp[:5]}
+            if response[:4] == "pos:":
+                data = response[4:].split()
+                self.current_position = [float(x) for x in data]
             else:
                 pass
 
@@ -229,11 +259,18 @@ class StepperApplication(threading.Thread):
         self.df = pd.DataFrame()
 
     def get_current_position(self):
-        self.current_position = None
-        self.send_gcode("M114")
-        while self.current_position is None:
-            time.sleep(0.1)
-        return np.asarray(list(self.current_position.values()))
+        if self.current_position is None:
+            self.send_gcode("G93 N0")
+            time.sleep(0.5)
+            if self.current_position is None:
+                messagebox.showinfo(
+                    "Error",
+                    "No position information available. \nPlease check the connection to stepper driver.",
+                )
+                raise TimeoutError(
+                    "Failed to get current position within the timeout period."
+                )
+        return self.current_position[1:]
 
 
 def update_plot(frame, stepper_app, lines):
@@ -259,7 +296,8 @@ if __name__ == "__main__":
     stepper_app.start()
 
     trajectory = {
-        "axis": "Z (mm)",
+        "axis": "Focus (mm)",
+        "relative": "True",
         "start": 0,
         "target": 0.1,
         "wait (s)": 1.0,
@@ -268,10 +306,11 @@ if __name__ == "__main__":
         "repeat": 1,
     }
 
-    gcode = to_gcode(trajectory)
-    # convert_to_trace(gcode)
+    gcode = to_gcode(trajectory, start_position=np.ones(5))
+    plt.plot(to_profile(gcode))
+    plt.show()
 
-    if True:
+    if False:
 
         # Start the stepper application with the G-code commands
         stepper_app.command_queue.put(gcode)

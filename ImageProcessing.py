@@ -245,6 +245,8 @@ class FrameConsumer:
                     cv2.imshow(IMAGE_CAPTION, fov)
                     cv2.namedWindow(IMAGE_CAPTION)
                     cv2.setMouseCallback(IMAGE_CAPTION, self._mouse_callback)
+                    if n_frames == 0:
+                        self.main_root.focus_force()
                 n_frames += 1
 
                 # extract selected roi and save it
@@ -273,8 +275,9 @@ class FrameConsumer:
 
                 else:
                     if len(self.selected_roi):
-                        self.save_frames_to_binary_file(self.settings["_filename"])
-                        self.selected_roi = []
+                        if self.settings.get("_aquisition mode") == "calibrate":
+                            self.save_frames_to_binary_file(self.settings["_filename"])
+                            self.selected_roi = []
 
                         columns = [
                             [f"X{i} (um)", f"Y{i} (um)", f"Z{i} (um)"]

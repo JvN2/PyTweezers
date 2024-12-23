@@ -10,6 +10,7 @@ from AlliedVision import CameraApplication
 from TraceIO import increment_filename, create_hdf
 from MT_steppers import StepperApplication, to_gcode, to_profile
 from MT_settings import SettingsEditor
+from time import sleep
 
 SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
@@ -76,6 +77,7 @@ class MainApp:
         self.settings["camera (pix)"] = np.asarray((1024, 1024))
         self.settings["fov_size (pix)"] = min(self.settings["camera (pix)"])
         self.settings["fov_center (pix)"] = self.settings["camera (pix)"] // 2
+        self.settings["pixel_size (um)"] = 0.71
 
         self.settings["frames"] = 0
 
@@ -107,19 +109,17 @@ class MainApp:
             messagebox.showinfo("Error", "No ROIs defined")
             return
         range = 0.06
+        current_focus = self.stepper_app.get_current_position()[2]
         gcode = [
-            "G91",
+            f"G1 Z{current_focus:.3f} F10",
             "G93 S0.1",
-            f"G1 Z{range:.3f} F0.1",
+            f"G1 Z{current_focus + range:.3f} F0.2",
             "G4 S0.25",
             "G93",
-            f"G1 Z-{range:.3f} F10",
-            "G90",
+            f"G1 Z{current_focus:.3f} F10",
         ]
 
-        self.settings["_profile"] = to_profile(
-            gcode, start_position=self.stepper_app.get_current_position()
-        )
+        self.settings["_profile"] = to_profile(gcode)
         self.ax.clear()
         self.settings["_profile"].plot(
             ax=self.ax, linestyle="--", legend=False, color="lightgray"
@@ -137,9 +137,17 @@ class MainApp:
 
     def create_trajectory(self):
         settings = {
-            "axis": ["Z (mm)", "X (mm)", "Y (mm)", "Z (mm)"],
-            "start": [0, 0, 10, 0.1, "linear"],
-            "target": [0.1, 0, 10, 0.001, "linear"],
+            "axis": [
+                "Focus (mm)",
+                "X (mm)",
+                "Y (mm)",
+                "Focus (mm)",
+                "Shift (mm)",
+                "Rotation (turns)",
+            ],
+            "relative": ["False", "False", "True"],
+            "start": [0, -10, 10, 0.1, "linear"],
+            "target": [0.1, -10, 10, 0.001, "linear"],
             "wait (s)": [1, 0, 10, 0.1, "linear"],
             "move (s)": [5, 0, 10, 0.1, "linear"],
             "dwell (s)": [0, 0, 10, 0.1, "linear"],
@@ -151,12 +159,15 @@ class MainApp:
 
         settings_editor = SettingsEditor(self.root, settings, "Create trajectory ...")
         self.root.wait_window(settings_editor)
+
         if settings_editor.settings:
             self.settings["_trajectory"] = settings_editor.settings
-            gcode = to_gcode(self.settings["_trajectory"])
-            self.settings["_profile"] = to_profile(
-                gcode, start_position=self.stepper_app.get_current_position()
+
+            gcode = to_gcode(
+                self.settings["_trajectory"],
+                self.stepper_app.get_current_position(),
             )
+            self.settings["_profile"] = to_profile(gcode)
 
             self.ax.clear()
             self.settings["_profile"].plot(
@@ -170,9 +181,21 @@ class MainApp:
 
     def go_trajectory(self):
         if self.settings["_trajectory"]:
+            gcode = to_gcode(
+                self.settings["_trajectory"],
+                self.stepper_app.get_current_position(),
+            )
+            self.settings["_profile"] = to_profile(gcode)
+            self.ax.clear()
+
             self.settings["_aquisition mode"] = "measure"
             self.settings["_filename"] = increment_filename()
-            self.stepper_app.command_queue.put(to_gcode(self.settings["_trajectory"]))
+            self.stepper_app.command_queue.put(
+                to_gcode(
+                    self.settings["_trajectory"],
+                    self.stepper_app.get_current_position(),
+                )
+            )
         else:
             messagebox.showinfo("Error", "No trajectory defined")
 
@@ -201,6 +224,8 @@ class MainApp:
         elif event.keysym == "Next":
             gcode.append(f"G1 Z{-step_size:.3f} F1000")
         gcode.append("G90")
+        gcode.append("M400")
+        gcode.append("G93 N0")
 
         self.stepper_app.command_queue.put(gcode)
 
@@ -233,7 +258,7 @@ class MainApp:
             self.canvas.draw()
 
             if self.settings["_aquisition mode"] == "idle":
-                print("Saving ....")
+                sleep(0.5)
                 create_hdf(self.settings, stepper_df, traces=self.settings["_traces"])
                 self.stepper_app.clear_dataframe()
 

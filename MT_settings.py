@@ -100,7 +100,6 @@ class SettingsEditor(tk.Toplevel):
                 combobox.bind("<<ComboboxSelected>>", self.open_file_dialog)
                 self.entries[key] = var
                 row += 1
-                print(values[0])
 
         tk.Button(self, text="OK", command=self.on_ok, width=button_width).grid(
             row=row, column=2, padx=15, pady=5
@@ -220,10 +219,10 @@ if __name__ == "__main__":
         "File": (Path("c:/tmp/image.bin"), "*.bin", "*.hdf"),
     }
 
-    settings = {
-        "axis": ("X (mm)", "Y (mm)", "Z (mm)"),
-        "target": (1, 0, 10, 0.1, "linear"),
-    }
+    # settings = {
+    #     "axis": ("X (mm)", "Y (mm)", "Z (mm)"),
+    #     "target": (1, 0, 10, 0.1, "linear"),
+    # }
     print(settings)
 
     title = "Adjust settings ..."
