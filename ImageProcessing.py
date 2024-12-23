@@ -195,7 +195,7 @@ class FrameConsumer:
             frames_left = self.frame_queue.qsize()
             while frames_left:
                 try:
-                    cam_id, frame, frame_num, process_frames = (
+                    cam_id, frame, frame_num, acquisition_in_progress = (
                         self.frame_queue.get_nowait()
                     )
                 except queue.Empty:
@@ -238,7 +238,7 @@ class FrameConsumer:
                     self.settings,
                     fov=True,
                     frame_nr=frame_num,
-                    proccessing=process_frames,
+                    proccessing=acquisition_in_progress,
                 )
 
                 if frame_num % 2 == 0:
@@ -250,7 +250,7 @@ class FrameConsumer:
                 n_frames += 1
 
                 # extract selected roi and save it
-                if process_frames:
+                if acquisition_in_progress:
                     if self.settings.get("_aquisition mode") in [
                         "calibrate",
                         "measure",
@@ -262,7 +262,7 @@ class FrameConsumer:
                         )
 
                         # dummy coords, to be replaced by actual values
-                        coords = np.zeros(3 * len(self.settings["rois"]) + 1)
+                        coords = np.zeros(4 * len(self.settings["rois"]) + 1)
                         coords[0] = frame_num
 
                         try:
@@ -279,8 +279,9 @@ class FrameConsumer:
                             self.save_frames_to_binary_file(self.settings["_filename"])
                             self.selected_roi = []
 
+                    if len(self.traces):
                         columns = [
-                            [f"X{i} (um)", f"Y{i} (um)", f"Z{i} (um)"]
+                            [f"X{i} (um)", f"Y{i} (um)", f"Z{i} (um)", f"A{i} (a.u.)"]
                             for i, _ in enumerate(self.settings["rois"])
                         ]
                         columns = list(itertools.chain.from_iterable(columns))

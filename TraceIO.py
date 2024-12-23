@@ -1125,7 +1125,11 @@ def create_hdf(settings, stepper, traces=None):
     data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
     data.set_settings(settings)
 
+    traces = settings["_traces"]
+
     if traces is not None:
+        ic(traces, data.traces)
+        # ic(len(traces), len(traces.index))
         time = traces["Frame"].values
         time = time - time[0]
         time /= time[-1]

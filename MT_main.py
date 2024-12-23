@@ -113,7 +113,7 @@ class MainApp:
         gcode = [
             f"G1 Z{current_focus:.3f} F10",
             "G93 S0.1",
-            f"G1 Z{current_focus + range:.3f} F0.2",
+            f"G1 Z{current_focus + range:.3f} F1",
             "G4 S0.25",
             "G93",
             f"G1 Z{current_focus:.3f} F10",
@@ -138,19 +138,19 @@ class MainApp:
     def create_trajectory(self):
         settings = {
             "axis": [
-                "Focus (mm)",
+                "X (mm)",
                 "X (mm)",
                 "Y (mm)",
                 "Focus (mm)",
                 "Shift (mm)",
                 "Rotation (turns)",
             ],
-            "relative": ["False", "False", "True"],
+            "relative": ["True", "False", "True"],
             "start": [0, -10, 10, 0.1, "linear"],
-            "target": [0.1, -10, 10, 0.001, "linear"],
+            "target": [0.02, -10, 10, 0.001, "linear"],
             "wait (s)": [1, 0, 10, 0.1, "linear"],
-            "move (s)": [5, 0, 10, 0.1, "linear"],
-            "dwell (s)": [0, 0, 10, 0.1, "linear"],
+            "move (s)": [3, 0, 10, 0.1, "linear"],
+            "dwell (s)": [-6, -100, 100, 0.1, "linear"],
             "repeat": [1, 1, 4, 1, "linear"],
         }
         if self.settings["_trajectory"]:
@@ -259,7 +259,7 @@ class MainApp:
 
             if self.settings["_aquisition mode"] == "idle":
                 sleep(0.5)
-                create_hdf(self.settings, stepper_df, traces=self.settings["_traces"])
+                create_hdf(self.settings, stepper_df)
                 self.stepper_app.clear_dataframe()
 
         self.root.after(500, self.update_plot)

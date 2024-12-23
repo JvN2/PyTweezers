@@ -46,7 +46,12 @@ def to_gcode(trajectory, start_position=np.zeros(5)):
     for i in range(trajectory["repeat"]):
         gcode.append(f"G4 S{trajectory['wait (s)']}")
         gcode.append(f"G1 {axis}{target:.3f} F{velocity*60}")
-        gcode.append(f"G4 S{trajectory['dwell (s)']}")
+        if trajectory["dwell (s)"] > 0:
+            gcode.append(f"G4 S{trajectory['dwell (s)']}")
+        elif trajectory["dwell (s)"] < 0:
+            mid_distance = 2 * (target - start)
+            mid_velocity = np.abs(mid_distance / trajectory["dwell (s)"])
+            gcode.append(f"G1 {axis}{target - mid_distance:.3f} F{mid_velocity*60}")
         gcode.append(f"G1 {axis}{start:.3f} F{velocity*60}")
         gcode.append(f"G4 S{trajectory['wait (s)']}")
     gcode.append(f"G93")
