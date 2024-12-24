@@ -256,6 +256,8 @@ class MainApp:
 
     def update_plot(self):
         stepper_df = self.stepper_app.get_dataframe()
+        self.settings["_logging"] = self.stepper_app.get_logging_status()
+
         if not stepper_df.empty:
             self.axes[0].clear()
 
@@ -278,14 +280,18 @@ class MainApp:
                 self.axes[1].plot(
                     tmp[:, 0] - tmp[0, 0], tmp[:, 1], "o", color="red", alpha=0.3
                 )
+                ic(self.settings["_aquisition mode"], self.settings["_logging"])
 
-                self.settings["_logging"] = self.stepper_app.get_logging_status()
-
-                # if self.settings["_aquisition mode"] == "done processing":
-                # create_hdf(self.settings, stepper_df)
-                # ic(self.settings["_aquisition mode"], self.settings["_filename"])
-                # self.stepper_app.clear_dataframe()
-                # self.settings["_aquisition mode"] = "idle"
+                #### to be fixed
+                if (
+                    self.settings["_aquisition mode"] == "done processing"
+                    and not self.settings["_logging"]
+                ):
+                    create_hdf(self.settings, stepper_df)
+                    ic(self.settings["_aquisition mode"], self.settings["_filename"])
+                    self.stepper_app.clear_dataframe()
+                    self.data_list.clear()
+                    self.settings["_aquisition mode"] = "idle"
 
         self.root.after(500, self.update_plot)
 

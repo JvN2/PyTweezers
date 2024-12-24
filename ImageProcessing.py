@@ -292,12 +292,15 @@ class FrameConsumer:
                     self.selected_roi.append(roi)
 
                 else:
-                    if len(self.selected_roi) and not acquisition_in_progress:
+                    if (
+                        len(self.selected_roi)
+                        and not acquisition_in_progress
+                        and not self.settings.get(self.settings["_logging"])
+                    ):
                         if self.settings.get("_aquisition mode") == "calibrate":
                             self.save_frames_to_binary_file(self.settings["_filename"])
                             self.selected_roi = []
-
-                        self.settings["_aquisition mode"] = "done processing"
+                            self.settings["_aquisition mode"] = "done processing"
 
             cv2.waitKey(10)
             if self.quit:
