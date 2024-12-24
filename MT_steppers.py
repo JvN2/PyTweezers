@@ -195,6 +195,7 @@ class StepperApplication(threading.Thread):
         self.stop_event = threading.Event()
         self.command_queue = queue.Queue()  # Queue for G-code commands
         self.current_position = None
+        self.logging = False
 
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
@@ -209,6 +210,9 @@ class StepperApplication(threading.Thread):
         if self.serial_connection and self.serial_connection.is_open:
             self.serial_connection.write((gcode + "\n").encode("utf-8"))
             time.sleep(0.05)  # Wait for the command to be processed
+
+    def get_logging_status(self):
+        return self.logging
 
     def run(self):
         self.connect()
@@ -244,6 +248,7 @@ class StepperApplication(threading.Thread):
                     ]
                     self.df = pd.DataFrame(columns=data)
                     self.df.set_index(self.df.columns[0], inplace=True)
+                    self.logging = True
             elif response[:2] == "X:":
                 tmp = response.split(" ")
                 self.current_position = {x[0]: float(x[2:]) for x in tmp[:5]}
@@ -251,7 +256,8 @@ class StepperApplication(threading.Thread):
                 data = response[4:].split()
                 self.current_position = [float(x) for x in data]
             else:
-                pass
+                if response == "Stopped logging":
+                    self.logging = False
 
     def stop(self):
         self.running = False
@@ -264,17 +270,17 @@ class StepperApplication(threading.Thread):
         self.df = pd.DataFrame()
 
     def get_current_position(self):
+        # if self.current_position is None:
+        self.send_gcode("G93 N0")
+        time.sleep(0.1)
         if self.current_position is None:
-            self.send_gcode("G93 N0")
-            time.sleep(0.5)
-            if self.current_position is None:
-                messagebox.showinfo(
-                    "Error",
-                    "No position information available. \nPlease check the connection to stepper driver.",
-                )
-                raise TimeoutError(
-                    "Failed to get current position within the timeout period."
-                )
+            messagebox.showinfo(
+                "Error",
+                "No position information available. \nPlease check the connection to stepper driver.",
+            )
+            raise TimeoutError(
+                "Failed to get current position within the timeout period."
+            )
         return self.current_position[1:]
 
 

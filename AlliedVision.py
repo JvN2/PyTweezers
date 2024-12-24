@@ -135,12 +135,14 @@ class FrameProducer(threading.Thread):
 
 
 class CameraApplication:
-    def __init__(self, settings={}, root=None):
+    def __init__(self, settings={}, root=None, data_queue=None):
         self.frame_queue = queue.Queue(maxsize=FRAME_QUEUE_SIZE)
         self.producers = {}
         self.producers_lock = threading.Lock()
         self.settings = settings
-        self.consumer = FrameConsumer(self.frame_queue, self.settings, root=root)
+        self.consumer = FrameConsumer(
+            self.frame_queue, self.settings, root=root, data_queue=data_queue
+        )
 
     def __call__(self, cam: Camera, event: CameraEvent):
         if event == CameraEvent.Detected:

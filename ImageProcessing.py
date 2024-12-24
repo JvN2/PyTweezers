@@ -10,6 +10,7 @@ from TraceIO import hdf_data
 import itertools
 from pathlib import Path
 from matplotlib import pyplot as plt
+from time import sleep
 from scipy.ndimage import maximum_filter
 from scipy.optimize import minimize
 
@@ -117,6 +118,7 @@ def plot_rois(
         )
     else:
         roi_size = settings["roi_size (pix)"]
+
     for i, center in enumerate(settings.get("rois", [])):
         if fov:
             center = (np.array(center) - settings["fov_center (pix)"]) / settings[
@@ -146,23 +148,23 @@ def plot_rois(
             color,
             1,
         )
-        if frame_nr:
-            if proccessing:
-                color = (0, 255, 255)
-            else:
-                color = (255, 0, 0)
-            cv2.putText(
-                cv_frame,
-                f"{frame_nr}",
-                [
-                    10,
-                    cv_frame.shape[1] - 10,
-                ],
-                cv2.FONT_HERSHEY_COMPLEX_SMALL,
-                1,
-                color,
-                1,
-            )
+    if frame_nr:
+        if proccessing:
+            color = (0, 255, 255)
+        else:
+            color = (255, 0, 0)
+        cv2.putText(
+            cv_frame,
+            f"{frame_nr}",
+            [
+                10,
+                cv_frame.shape[1] - 10,
+            ],
+            cv2.FONT_HERSHEY_COMPLEX_SMALL,
+            1,
+            color,
+            1,
+        )
 
     return cv_frame
 
@@ -177,13 +179,17 @@ def extract_rois(frame: np.ndarray, settings=None) -> np.ndarray:
 
 
 class FrameConsumer:
-    def __init__(self, frame_queue: queue.Queue, settings: dict, root=None):
+    def __init__(
+        self, frame_queue: queue.Queue, settings: dict, root=None, data_queue=None
+    ):
         self.frame_queue = frame_queue
+        self.data_queue = data_queue
         self.quit = False
         self.settings = settings
         self.selected_roi = []
         self.traces = []
         self.main_root = root
+        self.latest_processed_frame = -1
 
     def run(self):
         IMAGE_CAPTION = "MT camera"
@@ -192,13 +198,16 @@ class FrameConsumer:
         alive = True
 
         while alive:
+            # get all frames from the queue
             frames_left = self.frame_queue.qsize()
             while frames_left:
                 try:
                     cam_id, frame, frame_num, acquisition_in_progress = (
                         self.frame_queue.get_nowait()
                     )
+
                 except queue.Empty:
+                    acquisition_in_progress = True
                     break
 
                 if frame:
@@ -215,13 +224,12 @@ class FrameConsumer:
                     ],
                     axis=1,
                 )
-
                 # Extract the FOV from the camera image and display it
                 try:
                     center = self.settings["rois"][self.settings["selected"]]
                 except IndexError:
                     center = self.settings["fov_center (pix)"]
-                center
+
                 (
                     fov,
                     self.settings["fov_center (pix)"],
@@ -249,51 +257,47 @@ class FrameConsumer:
                         self.main_root.focus_force()
                 n_frames += 1
 
-                # extract selected roi and save it
-                if acquisition_in_progress:
-                    if self.settings.get("_aquisition mode") in [
-                        "calibrate",
-                        "measure",
-                    ]:
-                        (roi, _, _) = get_subarray(
-                            cv_images,
-                            self.settings["rois"][self.settings["selected"]],
-                            self.settings["roi_size (pix)"],
-                        )
+                if (
+                    acquisition_in_progress
+                    and (
+                        self.settings.get("_aquisition mode")
+                        in [
+                            "calibrate",
+                            "measure",
+                        ]
+                    )
+                    and frame_num != self.latest_processed_frame
+                ):
+                    # Extract selected roi and save it
+                    self.latest_processed_frame = frame_num
 
-                        # dummy coords, to be replaced by actual values
-                        coords = np.zeros(4 * len(self.settings["rois"]) + 1)
-                        coords[0] = frame_num
+                    (roi, _, _) = get_subarray(
+                        cv_images,
+                        self.settings["rois"][self.settings["selected"]],
+                        self.settings["roi_size (pix)"],
+                    )
 
-                        try:
-                            if frame_num != self.traces[-1][0]:
-                                self.traces.append(coords)
-                                self.selected_roi.append(roi)
-                        except IndexError:
-                            self.traces = [coords]
-                            self.selected_roi.append(roi)
+                    # extract coordinates in each roi
+
+                    # for i, roi in enumerate(extract_rois(roi, self.settings)):
+                    #     coords[4 * i + 1 : 4 * i + 5] = find_center(roi)
+                    # dummy coords, to be replaced by actual values
+
+                    size = 4 * len(self.settings["rois"]) + 1
+                    coords = np.random.normal(loc=0, scale=1, size=size)
+                    coords[0] = frame_num
+                    self.data_queue.put(coords)
+
+                    # store selected roi
+                    self.selected_roi.append(roi)
 
                 else:
-                    if len(self.selected_roi):
+                    if len(self.selected_roi) and not acquisition_in_progress:
                         if self.settings.get("_aquisition mode") == "calibrate":
                             self.save_frames_to_binary_file(self.settings["_filename"])
                             self.selected_roi = []
 
-                    if len(self.traces):
-                        columns = [
-                            [f"X{i} (um)", f"Y{i} (um)", f"Z{i} (um)", f"A{i} (a.u.)"]
-                            for i, _ in enumerate(self.settings["rois"])
-                        ]
-                        columns = list(itertools.chain.from_iterable(columns))
-                        columns.insert(0, "Frame")
-
-                        self.settings["_traces"] = pd.DataFrame(
-                            self.traces,
-                            columns=columns,
-                        )
-                        self.traces = []
-
-                        self.settings["_aquisition mode"] = "idle"
+                        self.settings["_aquisition mode"] = "done processing"
 
             cv2.waitKey(10)
             if self.quit:
