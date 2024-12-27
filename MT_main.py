@@ -7,13 +7,17 @@ from icecream import ic
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.animation as animation
-from AlliedVision import CameraApplication
 from TraceIO import increment_filename, create_hdf
 from MT_steppers import StepperApplication, to_gcode, to_profile
 from MT_settings import SettingsEditor
 from time import sleep
 from collections import deque
 import queue
+
+# try:
+# from AlliedVision import CameraApplication
+# except ImportError:
+from DummyCamera2 import CameraApplication
 
 SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
