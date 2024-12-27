@@ -1,6 +1,7 @@
 import numpy as np
 import threading
 import time
+from icecream import ic
 
 
 class CameraApplication:
@@ -23,6 +24,7 @@ class CameraApplication:
         self.start()
 
     def _produce_frames(self):
+        ic("Start procucing frames")
         frame_nr = 0
         while self.running:
             frame = np.random.randint(

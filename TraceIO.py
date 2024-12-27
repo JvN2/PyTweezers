@@ -1121,50 +1121,37 @@ def import_tdms(filename, data=None):
     return data
 
 
-def create_hdf(settings, stepper, traces):
+def create_hdf(settings, stepper_df, tracker_df):
     data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
-    ic(settings, stepper, traces)
-    ic(data.filename)
-
-
-def create_hdf_old(settings, stepper, traces=None):
-    print("creating hdf")
-    ic(settings, stepper, traces)
-    data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
-    print(data.settings)
-
     data.set_settings(settings)
 
-    traces = settings["_traces"]
-
-    if traces is not None:
-        ic(traces, data.traces)
-        # ic(len(traces), len(traces.index))
-        time = traces["Frame"].values
-        time = time - time[0]
-        time /= time[-1]
-        time *= stepper.index[-1]
+    if tracker_df is not None:
+        time = tracker_df["Frame"].values
+        time -= time[0]
+        time /= settings["frame rate (Hz)"]
 
         data.traces["Time (s)"] = time
 
-        for col in stepper.loc[:, stepper.nunique() > 1]:
-            data.traces[col] = np.interp(time, stepper.index, stepper[col].values)
+        for col in stepper_df.loc[:, stepper_df.nunique() > 1]:
+            data.traces[col] = np.interp(
+                time, stepper_df["Time (s)"], stepper_df[col].values
+            )
 
         data.shared_tracenames = list(data.traces.columns)
-        filename = data.save(settings=True)
+        data.save(settings=True)
 
-        labels = set([trace.split(" ")[0][1:] for trace in traces.columns[1:]])
-        channels = set([re.sub(r"\d+", "", trace) for trace in traces.columns[1:]])
+        labels = set([trace.split(" ")[0][1:] for trace in tracker_df.columns[1:]])
+        channels = set([re.sub(r"\d+", "", trace) for trace in tracker_df.columns[1:]])
 
         for label in sorted(labels):
             data.label = label
             for channel in sorted(channels):
-                data.traces[channel] = traces[channel[0] + label + channel[1:]].values
-            filename = data.save(settings=False)
+                data.traces[channel] = tracker_df[
+                    channel[0] + label + channel[1:]
+                ].values
+            data.save(settings=False)
 
-    ic(data.filename, data.list_labels(), data.list_channels())
-
-    print(f"Data saved to {data.filename}")
+    return data.filename
 
 
 if __name__ == "__main__":

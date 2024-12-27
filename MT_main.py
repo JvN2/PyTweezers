@@ -13,11 +13,13 @@ from MT_settings import SettingsEditor
 from time import sleep
 from collections import deque
 import queue
+import pandas as pd
 
 # try:
-# from AlliedVision import CameraApplication
+from AlliedVision import CameraApplication
+
 # except ImportError:
-from DummyCamera2 import CameraApplication
+# from DummyCamera2 import CameraApplication
 
 SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
@@ -41,9 +43,9 @@ class MainApp:
         )
         self.stepper_app.start()
 
-        self.tracking_queue = queue.Queue()
-        self.tracking_data = deque()
-        self.tracking_busy = True
+        self.tracker_queue = queue.Queue()
+        self.tracker_data = deque()
+        self.tracker_done = True
         self.start_camera()
 
         menubar = tk.Menu(root)
@@ -101,18 +103,16 @@ class MainApp:
 
         self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "idle"
-        self.settings["_trajectory"] = None
-        self.settings["_traces"] = None
-        self.settings["_logging"] = False
 
     def start_camera(self):
         self.camera_app = CameraApplication(
-            settings=self.settings, root=self.root, data_queue=self.tracking_queue
+            settings=self.settings, root=self.root, data_queue=self.tracker_queue
         )
         threading.Thread(target=self.camera_app.run).start()
 
     def stop_camera(self):
         self.camera_app.stop()
+        ic("Camera stopped")
 
     def exit_application(self):
         try:
@@ -170,10 +170,12 @@ class MainApp:
         print(self.stepper_app.get_current_position())
 
     def init_plot(self, profile=None):
+        self.tracker_data = deque()
+        self.stepper_data = deque()
+
         self.axes[0].clear()
         self.axes[1].clear()
 
-        (self.ax1_line,) = self.axes[1].plot([], [], "o", color="red", alpha=0.3)
         self.axes[1].set_ylabel("Z (um)")
         self.axes[1].set_xlabel("Time (s)")
         self.axes[1].set_ylim(-10, 10)
@@ -182,7 +184,10 @@ class MainApp:
             profile.plot(
                 ax=self.axes[0], linestyle="--", color="lightgray", legend=False
             )
+
         (self.ax0_line,) = self.axes[0].plot([], [], "o", color="blue", alpha=0.3)
+        (self.ax1_line,) = self.axes[1].plot([], [], "o", color="red", alpha=0.3)
+
         self.axes[0].set_ylabel("Focus (mm)")
         self.axes[0].set_xlabel("Time (s)")
 
@@ -197,7 +202,6 @@ class MainApp:
         self.canvas.draw()
 
     def update_plot(self):
-        self.settings["_logging"] = self.stepper_app.get_logging_status()
 
         while not self.stepper_queue.empty():
             data = self.stepper_queue.get()
@@ -211,89 +215,49 @@ class MainApp:
             focus_index = self.stepper_app.axes.index("Focus (mm)")
             t = [data[time_index] for data in self.stepper_data]
             z = [data[focus_index] for data in self.stepper_data]
+
             self.ax0_line.set_data(t, z)
             self.axes[0].set_xlabel("Time (s)")  # Ensure the x-axis label is set
             self.canvas.draw()
 
-        while not self.tracking_queue.empty():
-            data = self.tracking_queue.get()
+        while not self.tracker_queue.empty():
+            data = self.tracker_queue.get()
             if data is SENTINEL:
                 self.tracker_done = True
             else:
-                self.tracking_data.append(data)
+                self.tracker_data.append(data)
 
-        if len(self.tracking_data) > 1:
-            # time_index = self.camera_app.axes.index("Time (s)")
-            # position_index = self.camera_app.axes.index("Position (pix)")
+        if len(self.tracker_data) > 1:
             time_index = 0
             position_index = 1
-            t = [data[time_index] for data in self.tracking_data]
+            t = [data[time_index] for data in self.tracker_data]
             t = (np.asarray(t) - t[0]) / self.settings["frame rate (Hz)"]
-            z = [data[position_index] for data in self.tracking_data]
+            z = [data[position_index] for data in self.tracker_data]
+
             self.ax1_line.set_data(t, z)
+            self.axes[1].set_xlabel("Time (s)")  # Ensure the x-axis label is set
+            self.axes[1].relim()
+            self.axes[1].autoscale_view()
             self.canvas.draw()
 
-        if len(self.tracking_data) > 1 and self.stepper_done and self.tracker_done:
-            # Save the data
-            # t = [data[time_index] for data in self.tracking_data]
-            # z = [data[position_index] for data in self.tracking_data]
-            # t = (np.asarray(t) - t[0]) / self.settings["frame rate (Hz)"]
-            ic("Saving data")
-            self.tracking_data.clear()
-            self.stepper_data.clear()
-            self.settings["_aquisition mode"] = "idle"
+        if self.stepper_done and self.tracker_done and self.stepper_data:
+            # Save data to file
+            self.settings["_aquisition mode"] == "idle"
+            stepper_df = pd.DataFrame(self.stepper_data, columns=self.stepper_app.axes)
+
+            cols = ["Frame"]
+            for i, _ in enumerate(self.settings["rois"]):
+                cols.append(f"A{i} (a.u.)")
+                cols.append(f"X{i} (pix)")
+                cols.append(f"Y{i} (pix)")
+                cols.append(f"Z{i} (um)")
+            tracker_df = pd.DataFrame(self.tracker_data, columns=cols)
+
+            print(f"Data saved in {create_hdf(self.settings, stepper_df, tracker_df)}")
+
+            self.stepper_data, self.tracker_data = [], []
 
         self.root.after(100, self.update_plot)
-        return
-
-        if self.stepper_data:  # plot the stepper data
-            self.axes[0].clear()
-
-            label = self.settings["_trajectory"]["axis"]
-            self.settings["_profile"].plot(
-                ax=self.axes[0], linestyle="--", legend=False, color="lightgray"
-            )
-            self.axes[0].set_xlim(0, self.settings["_profile"].index[-1])
-
-            t = np.asarray(self.stepper_data)[
-                :, self.stepper_app.axes.index("Time (s)")
-            ]
-            z = np.asarray(self.stepper_data)[
-                :, self.stepper_app.axes.index("Focus (mm)")
-            ]
-            self.axes[0].plot(t, z, linestyle="--", legend=False, color="blue")
-
-            self.axes[0].set_ylabel(label)
-            self.fig.tight_layout()
-            self.canvas.draw()
-
-        while not self.tracking_queue.empty():
-            self.tracking_data.append(self.tracking_queue.get())
-
-        if np.shape(np.asarray(self.tracking_data))[0] > 1:  # plot the tracking data
-            self.axes[1].clear()
-
-            tmp = np.asarray(self.tracking_data)
-            self.axes[1].plot(
-                (tmp[:, 0] - tmp[0, 0]) / self.settings["frame rate (Hz)"],
-                tmp[:, 1],
-                "o",
-                color="red",
-                alpha=0.3,
-            )
-            self.axes[1].set_xlabel("Time (s)")
-            self.axes[1].set_ylabel("position (pix)")
-            self.axes[1].set_ylim(-10, 10)
-            self.axes[1].set_xlim(0, self.settings["_profile"].index[-1])
-
-            if self.settings["_aquisition mode"] == "done processing":  # Save the data
-                # ic("Saving data")
-                # # create_hdf(self.settings, stepper_df, self.tracking_data)
-                # ic("Data saved")
-                # self.stepper_app.clear_dataframe()
-                self.tracking_data.clear()
-                self.stepper_data.clear()
-                self.settings["_aquisition mode"] = "idle"
 
     def calibrate_lut(self):
         if len(self.settings["rois"]) == 0:
