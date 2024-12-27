@@ -11,6 +11,8 @@ from icecream import ic
 from tkinter import messagebox
 import queue
 
+SENTINEL = None
+
 
 def to_axis(axis):
     if axis == "X (mm)":
@@ -185,17 +187,26 @@ def to_profile(gcodes, axes=["X", "Y", "Z", "A", "B"], a=5):
 
 
 class StepperApplication(threading.Thread):
-    def __init__(self, port, baudrate=115200):
+    def __init__(self, port, data_queue, baudrate=115200):
         super().__init__()
         self.port = port
         self.baudrate = baudrate
         self.serial_connection = None
         self.running = False
-        self.df = pd.DataFrame()
         self.stop_event = threading.Event()
         self.command_queue = queue.Queue()  # Queue for G-code commands
+        self.data_queue = data_queue  # Queue for data to be plotted
         self.current_position = None
         self.logging = False
+
+        self.axes = [
+            "Time (s)",
+            "X (mm)",
+            "Y (mm)",
+            "Focus (mm)",
+            "Shift (mm)",
+            "Rotation (turns)",
+        ]
 
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
@@ -233,44 +244,23 @@ class StepperApplication(threading.Thread):
         while self.serial_connection and self.serial_connection.in_waiting > 0:
             response = self.serial_connection.readline().decode("utf-8").strip()
             if response[:4] == "log:":
-                data = response[4:].split()
                 try:
-                    self.current_position = [float(x) for x in data]
-                    self.df.loc[self.current_position[0]] = self.current_position[1:]
-                except:
-                    data = [
-                        "Time (s)",
-                        "X (mm)",
-                        "Y (mm)",
-                        "Focus (mm)",
-                        "Shift (mm)",
-                        "Rotation (turns)",
-                    ]
-                    self.df = pd.DataFrame(columns=data)
-                    self.df.set_index(self.df.columns[0], inplace=True)
-                    self.logging = True
-            elif response[:2] == "X:":
-                tmp = response.split(" ")
-                self.current_position = {x[0]: float(x[2:]) for x in tmp[:5]}
+                    self.current_position = [float(x) for x in response[4:].split()]
+                    self.data_queue.put(self.current_position)
+                except ValueError:
+                    pass
             if response[:4] == "pos:":
-                data = response[4:].split()
-                self.current_position = [float(x) for x in data]
+                self.current_position = [float(x) for x in response[4:].split()]
             else:
                 if response == "Stopped logging":
                     self.logging = False
+                    self.data_queue.put(SENTINEL)
 
     def stop(self):
         self.running = False
         self.disconnect()
 
-    def get_dataframe(self):
-        return self.df.copy()
-
-    def clear_dataframe(self):
-        self.df = pd.DataFrame()
-
     def get_current_position(self):
-        # if self.current_position is None:
         self.send_gcode("G93 N0")
         time.sleep(0.1)
         if self.current_position is None:

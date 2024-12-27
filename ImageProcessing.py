@@ -16,6 +16,7 @@ from scipy.optimize import minimize
 
 
 FRAME_QUEUE_SIZE = 10
+SENTINEL = None
 
 
 def get_subarray(array: np.ndarray, center: tuple, size: int) -> np.ndarray:
@@ -186,7 +187,7 @@ class FrameConsumer:
         self.data_queue = data_queue
         self.quit = False
         self.settings = settings
-        self.selected_roi = []
+        self.selected_roi_frames = []
         self.traces = []
         self.main_root = root
         self.latest_processed_frame = -1
@@ -216,7 +217,7 @@ class FrameConsumer:
                     frames.pop(cam_id, None)
                 frames_left -= 1
 
-            if frames:
+            if frames:  # Extract the FOV from the camera image and display it
                 cv_images = np.concatenate(
                     [
                         frames[cam_id].as_opencv_image()
@@ -224,7 +225,7 @@ class FrameConsumer:
                     ],
                     axis=1,
                 )
-                # Extract the FOV from the camera image and display it
+
                 try:
                     center = self.settings["rois"][self.settings["selected"]]
                 except IndexError:
@@ -289,18 +290,14 @@ class FrameConsumer:
                     self.data_queue.put(coords)
 
                     # store selected roi
-                    self.selected_roi.append(roi)
+                    self.selected_roi_frames.append(roi)
 
-                else:
-                    if (
-                        len(self.selected_roi)
-                        and not acquisition_in_progress
-                        and not self.settings.get(self.settings["_logging"])
-                    ):
-                        if self.settings.get("_aquisition mode") == "calibrate":
-                            self.save_frames_to_binary_file(self.settings["_filename"])
-                            self.selected_roi = []
-                            self.settings["_aquisition mode"] = "done processing"
+                if len(self.selected_roi_frames) and not acquisition_in_progress:
+                    if self.settings.get("_aquisition mode") == "calibrate":
+                        self.save_frames_to_binary_file(self.settings["_filename"])
+                        self.selected_roi_frames = []
+                    self.settings["_aquisition mode"] = "done processing"
+                    self.data_queue.put(SENTINEL)
 
             cv2.waitKey(10)
             if self.quit:
@@ -385,10 +382,10 @@ class FrameConsumer:
 
     def save_frames_to_binary_file(self, filename: str):
         with open(filename, "wb") as f:
-            for frame in self.selected_roi:
+            for frame in self.selected_roi_frames:
                 frame.tofile(f)
 
-        print(f"Saved {len(self.selected_roi)} frames to {filename}")
+        print(f"Saved {len(self.selected_roi_frames)} frames to {filename}")
 
 
 def load_bin_file(filename: str):

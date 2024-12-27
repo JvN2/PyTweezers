@@ -17,6 +17,7 @@ import queue
 
 SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
+SENTINEL = None
 
 
 class MainApp:
@@ -24,15 +25,21 @@ class MainApp:
         self.initialize_settings()
 
         self.root = root
-        self.root.geometry("800x600+0+0")
+        self.root.geometry("1000x600+0+0")
         self.root.title("Magnetic Tweezers")
         self.root.iconbitmap("MagnetIcon.ico")
 
-        self.data_queue = queue.Queue()
-        self.data_list = deque()
-
-        self.stepper_app = StepperApplication(port="COM5")
+        self.stepper_queue = queue.Queue()
+        self.stepper_data = deque()
+        self.stepper_done = True
+        self.stepper_app = StepperApplication(
+            port="COM5", data_queue=self.stepper_queue
+        )
         self.stepper_app.start()
+
+        self.tracking_queue = queue.Queue()
+        self.tracking_data = deque()
+        self.tracking_busy = True
         self.start_camera()
 
         menubar = tk.Menu(root)
@@ -84,6 +91,7 @@ class MainApp:
         self.settings["fov_size (pix)"] = min(self.settings["camera (pix)"])
         self.settings["fov_center (pix)"] = self.settings["camera (pix)"] // 2
         self.settings["pixel_size (um)"] = 0.71
+        self.settings["frame rate (Hz)"] = 20
 
         self.settings["frames"] = 0
 
@@ -95,7 +103,7 @@ class MainApp:
 
     def start_camera(self):
         self.camera_app = CameraApplication(
-            settings=self.settings, root=self.root, data_queue=self.data_queue
+            settings=self.settings, root=self.root, data_queue=self.tracking_queue
         )
         threading.Thread(target=self.camera_app.run).start()
 
@@ -112,6 +120,176 @@ class MainApp:
 
     def change_settings(self):
         pass
+
+    def handle_keyboard(self, event):
+        step_size = 0.05  # mm
+        if event.state & SHIFT_KEY:
+            step_size *= 10
+        if event.state & CTRL_KEY:
+            step_size *= 0.1
+
+        # adjust direction depending on camera orientation
+        xdir = 1
+        ydir = -1
+
+        gcode = ["G91"]
+        if event.keysym == "Up":
+            gcode.append(f"G1 Y{ydir*step_size:.3f} F1000")
+        elif event.keysym == "Down":
+            gcode.append(f"G1 Y{-ydir*step_size:.3f} F1000")
+        elif event.keysym == "Left":
+            gcode.append(f"G1 X{-xdir*step_size:.3f} F1000")
+        elif event.keysym == "Right":
+            gcode.append(f"G1 X{xdir*step_size:.3f} F1000")
+        elif event.keysym == "Prior":
+            gcode.append(f"G1 Z{step_size:.3f} F1000")
+        elif event.keysym == "Next":
+            gcode.append(f"G1 Z{-step_size:.3f} F1000")
+        gcode.append("G90")
+        gcode.append("M400")
+        gcode.append("G93 N0")
+
+        self.stepper_app.command_queue.put(gcode)
+
+    def show_about(self):
+        messagebox.showinfo(
+            "About", "Camera Control Application v0.1\n(c) 2024 by John van Noort"
+        )
+
+    def test(self):
+        print("Test")
+        # df = self.stepper_app.get_dataframe()
+        # ic(df)
+        # plt.plot(df["Z"])
+        # plt.show()
+        # create_hdf(self.settings["_filename"])
+        print(self.stepper_app.get_current_position())
+
+    def init_plot(self, profile=None):
+        self.axes[0].clear()
+        self.axes[1].clear()
+
+        (self.ax1_line,) = self.axes[1].plot([], [], "o", color="red", alpha=0.3)
+        self.axes[1].set_ylabel("Z (um)")
+        self.axes[1].set_xlabel("Time (s)")
+        self.axes[1].set_ylim(-10, 10)
+
+        if profile is not None:
+            profile.plot(
+                ax=self.axes[0], linestyle="--", color="lightgray", legend=False
+            )
+        (self.ax0_line,) = self.axes[0].plot([], [], "o", color="blue", alpha=0.3)
+        self.axes[0].set_ylabel("Focus (mm)")
+        self.axes[0].set_xlabel("Time (s)")
+
+        if profile is not None:
+            profile.plot(
+                ax=self.axes[0], linestyle="--", color="lightgray", legend=False
+            )
+            self.axes[0].set_xlim(0, profile.index[-1])
+            self.axes[1].set_xlim(0, profile.index[-1])
+
+        self.fig.tight_layout()
+        self.canvas.draw()
+
+    def update_plot(self):
+        self.settings["_logging"] = self.stepper_app.get_logging_status()
+
+        while not self.stepper_queue.empty():
+            data = self.stepper_queue.get()
+            if data is SENTINEL:
+                self.stepper_done = True
+            else:
+                self.stepper_data.append(data)
+
+        if len(self.stepper_data) > 1:
+            time_index = self.stepper_app.axes.index("Time (s)")
+            focus_index = self.stepper_app.axes.index("Focus (mm)")
+            t = [data[time_index] for data in self.stepper_data]
+            z = [data[focus_index] for data in self.stepper_data]
+            self.ax0_line.set_data(t, z)
+            self.axes[0].set_xlabel("Time (s)")  # Ensure the x-axis label is set
+            self.canvas.draw()
+
+        while not self.tracking_queue.empty():
+            data = self.tracking_queue.get()
+            if data is SENTINEL:
+                self.tracker_done = True
+            else:
+                self.tracking_data.append(data)
+
+        if len(self.tracking_data) > 1:
+            # time_index = self.camera_app.axes.index("Time (s)")
+            # position_index = self.camera_app.axes.index("Position (pix)")
+            time_index = 0
+            position_index = 1
+            t = [data[time_index] for data in self.tracking_data]
+            t = (np.asarray(t) - t[0]) / self.settings["frame rate (Hz)"]
+            z = [data[position_index] for data in self.tracking_data]
+            self.ax1_line.set_data(t, z)
+            self.canvas.draw()
+
+        if len(self.tracking_data) > 1 and self.stepper_done and self.tracker_done:
+            # Save the data
+            # t = [data[time_index] for data in self.tracking_data]
+            # z = [data[position_index] for data in self.tracking_data]
+            # t = (np.asarray(t) - t[0]) / self.settings["frame rate (Hz)"]
+            ic("Saving data")
+            self.tracking_data.clear()
+            self.stepper_data.clear()
+            self.settings["_aquisition mode"] = "idle"
+
+        self.root.after(100, self.update_plot)
+        return
+
+        if self.stepper_data:  # plot the stepper data
+            self.axes[0].clear()
+
+            label = self.settings["_trajectory"]["axis"]
+            self.settings["_profile"].plot(
+                ax=self.axes[0], linestyle="--", legend=False, color="lightgray"
+            )
+            self.axes[0].set_xlim(0, self.settings["_profile"].index[-1])
+
+            t = np.asarray(self.stepper_data)[
+                :, self.stepper_app.axes.index("Time (s)")
+            ]
+            z = np.asarray(self.stepper_data)[
+                :, self.stepper_app.axes.index("Focus (mm)")
+            ]
+            self.axes[0].plot(t, z, linestyle="--", legend=False, color="blue")
+
+            self.axes[0].set_ylabel(label)
+            self.fig.tight_layout()
+            self.canvas.draw()
+
+        while not self.tracking_queue.empty():
+            self.tracking_data.append(self.tracking_queue.get())
+
+        if np.shape(np.asarray(self.tracking_data))[0] > 1:  # plot the tracking data
+            self.axes[1].clear()
+
+            tmp = np.asarray(self.tracking_data)
+            self.axes[1].plot(
+                (tmp[:, 0] - tmp[0, 0]) / self.settings["frame rate (Hz)"],
+                tmp[:, 1],
+                "o",
+                color="red",
+                alpha=0.3,
+            )
+            self.axes[1].set_xlabel("Time (s)")
+            self.axes[1].set_ylabel("position (pix)")
+            self.axes[1].set_ylim(-10, 10)
+            self.axes[1].set_xlim(0, self.settings["_profile"].index[-1])
+
+            if self.settings["_aquisition mode"] == "done processing":  # Save the data
+                # ic("Saving data")
+                # # create_hdf(self.settings, stepper_df, self.tracking_data)
+                # ic("Data saved")
+                # self.stepper_app.clear_dataframe()
+                self.tracking_data.clear()
+                self.stepper_data.clear()
+                self.settings["_aquisition mode"] = "idle"
 
     def calibrate_lut(self):
         if len(self.settings["rois"]) == 0:
@@ -130,20 +308,10 @@ class MainApp:
             f"M400",
         ]
 
-        self.settings["_profile"] = to_profile(gcode)
-        self.axes[0].clear()
-        self.settings["_profile"].plot(
-            ax=self.axes[0], linestyle="--", legend=False, color="lightgray"
-        )
-
-        self.axes[0].set_ylabel("Focus (mm)")
-        self.axes[0].set_xlabel("Time (s)")
-        self.settings["_trajectory"] = {"axis": "Focus (mm)"}
-        self.fig.tight_layout()
-        self.canvas.draw()
-
+        self.init_plot(to_profile(gcode))
         self.settings["_aquisition mode"] = "calibrate"
         self.settings["_filename"] = increment_filename()
+        self.stepper_done, self.tracker_done = False, False
         self.stepper_app.command_queue.put(gcode + ["G93 N0"])
 
     def create_trajectory(self):
@@ -209,91 +377,6 @@ class MainApp:
             )
         else:
             messagebox.showinfo("Error", "No trajectory defined")
-
-    def handle_keyboard(self, event):
-        step_size = 0.05  # mm
-        if event.state & SHIFT_KEY:
-            step_size *= 10
-        if event.state & CTRL_KEY:
-            step_size *= 0.1
-
-        # adjust direction depending on camera orientation
-        xdir = 1
-        ydir = -1
-
-        gcode = ["G91"]
-        if event.keysym == "Up":
-            gcode.append(f"G1 Y{ydir*step_size:.3f} F1000")
-        elif event.keysym == "Down":
-            gcode.append(f"G1 Y{-ydir*step_size:.3f} F1000")
-        elif event.keysym == "Left":
-            gcode.append(f"G1 X{-xdir*step_size:.3f} F1000")
-        elif event.keysym == "Right":
-            gcode.append(f"G1 X{xdir*step_size:.3f} F1000")
-        elif event.keysym == "Prior":
-            gcode.append(f"G1 Z{step_size:.3f} F1000")
-        elif event.keysym == "Next":
-            gcode.append(f"G1 Z{-step_size:.3f} F1000")
-        gcode.append("G90")
-        gcode.append("M400")
-        gcode.append("G93 N0")
-
-        self.stepper_app.command_queue.put(gcode)
-
-    def show_about(self):
-        messagebox.showinfo(
-            "About", "Camera Control Application v0.1\n(c) 2024 by John van Noort"
-        )
-
-    def test(self):
-        print("Test")
-        # df = self.stepper_app.get_dataframe()
-        # ic(df)
-        # plt.plot(df["Z"])
-        # plt.show()
-        # create_hdf(self.settings["_filename"])
-        print(self.stepper_app.get_current_position())
-
-    def update_plot(self):
-        stepper_df = self.stepper_app.get_dataframe()
-        self.settings["_logging"] = self.stepper_app.get_logging_status()
-
-        if not stepper_df.empty:
-            self.axes[0].clear()
-
-            label = self.settings["_trajectory"]["axis"]
-            self.settings["_profile"].plot(
-                ax=self.axes[0], linestyle="--", legend=False, color="lightgray"
-            )
-            stepper_df[label].plot(ax=self.axes[0], legend=False, color="blue")
-            self.axes[0].set_ylabel(label)
-            self.fig.tight_layout()
-            self.canvas.draw()
-
-            while not self.data_queue.empty():
-                data = self.data_queue.get()
-                self.data_list.append(data)
-
-                tmp = np.asarray(self.data_list)
-                # Update the plot data
-                self.axes[1].clear()
-                self.axes[1].plot(
-                    tmp[:, 0] - tmp[0, 0], tmp[:, 1], "o", color="red", alpha=0.3
-                )
-                ic(self.settings["_aquisition mode"], self.settings["_logging"])
-
-                #### to be fixed
-                if (
-                    self.settings["_aquisition mode"] == "done processing"
-                    and not self.settings["_logging"]
-                ):
-                    create_hdf(self.settings, stepper_df)
-                    ic(self.settings["_aquisition mode"], self.settings["_filename"])
-                    self.stepper_app.clear_dataframe()
-                    self.data_list.clear()
-                    self.settings["_aquisition mode"] = "idle"
-
-        self.root.after(500, self.update_plot)
 
 
 if __name__ == "__main__":

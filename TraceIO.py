@@ -1121,8 +1121,18 @@ def import_tdms(filename, data=None):
     return data
 
 
-def create_hdf(settings, stepper, traces=None):
+def create_hdf(settings, stepper, traces):
     data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
+    ic(settings, stepper, traces)
+    ic(data.filename)
+
+
+def create_hdf_old(settings, stepper, traces=None):
+    print("creating hdf")
+    ic(settings, stepper, traces)
+    data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
+    print(data.settings)
+
     data.set_settings(settings)
 
     traces = settings["_traces"]
@@ -1152,7 +1162,9 @@ def create_hdf(settings, stepper, traces=None):
                 data.traces[channel] = traces[channel[0] + label + channel[1:]].values
             filename = data.save(settings=False)
 
-    print(f"Data saved to {filename}")
+    ic(data.filename, data.list_labels(), data.list_channels())
+
+    print(f"Data saved to {data.filename}")
 
 
 if __name__ == "__main__":
