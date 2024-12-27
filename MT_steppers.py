@@ -12,27 +12,25 @@ from tkinter import messagebox
 import queue
 
 SENTINEL = None
+STEPPER_AXES = {
+    "X": "X (mm)",
+    "Y": "Y (mm)",
+    "Z": "Focus (mm)",
+    "A": "Shift (mm)",
+    "B": "Rotations (turns)",
+}
 
 
 def to_axis(axis):
-    if axis == "X (mm)":
-        return "X", 0
-    elif axis == "Y (mm)":
-        return "Y", 1
-    elif axis == "Focus (mm)":
-        return "Z", 2
-    elif axis == "Shift (mm)":
-        return "A", 3
-    elif axis == "Rotations (turns)":
-        return "B", 4
-    else:
-        return None
+    for i, (key, value) in enumerate(STEPPER_AXES.items()):
+        if value == axis:
+            return i, key
 
 
 def to_gcode(trajectory, start_position=np.zeros(5)):
 
     gcode = []
-    axis, index = to_axis(trajectory["axis"])
+    index, axis = to_axis(trajectory["axis"])
     velocity = (
         np.abs(trajectory["target"] - trajectory["start"]) / trajectory["move (s)"]
     )
@@ -177,6 +175,10 @@ def to_profile(gcodes, axes=["X", "Y", "Z", "A", "B"], a=5):
 
     df.set_index("t", inplace=True)
 
+    df.rename_axis("Time (s)", inplace=True)
+    new_columns = {col: STEPPER_AXES[col] for col in df.columns if col in STEPPER_AXES}
+    df.rename(columns=new_columns, inplace=True)
+
     # drop all columns with constant values
     constant_columns = [col for col in df.columns if df[col].nunique() == 1]
     df = df.drop(columns=constant_columns)
@@ -199,14 +201,7 @@ class StepperApplication(threading.Thread):
         self.current_position = None
         self.logging = False
 
-        self.axes = [
-            "Time (s)",
-            "X (mm)",
-            "Y (mm)",
-            "Focus (mm)",
-            "Shift (mm)",
-            "Rotation (turns)",
-        ]
+        self.axes = STEPPER_AXES
 
     def connect(self):
         self.serial_connection = serial.Serial(self.port, self.baudrate)
@@ -293,8 +288,8 @@ if __name__ == "__main__":
 
     # print(convert_to_section(0, 0, 10, 0, 1, 8, 0.1))
 
-    stepper_app = StepperApplication(port="COM5")
-    stepper_app.start()
+    # stepper_app = StepperApplication(port="COM5")
+    # stepper_app.start()
 
     trajectory = {
         "axis": "Focus (mm)",
@@ -308,7 +303,7 @@ if __name__ == "__main__":
     }
 
     gcode = to_gcode(trajectory, start_position=np.ones(5))
-    plt.plot(to_profile(gcode))
+    to_profile(gcode).plot()
     plt.show()
 
     if False:

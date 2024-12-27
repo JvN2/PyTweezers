@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.animation as animation
 from TraceIO import increment_filename, create_hdf
-from MT_steppers import StepperApplication, to_gcode, to_profile
+from MT_steppers import StepperApplication, to_gcode, to_profile, to_axis
 from MT_settings import SettingsEditor
 from time import sleep
 from collections import deque
@@ -79,7 +79,7 @@ class MainApp:
         self.root.bind("<Alt-Next>", self.handle_keyboard)
 
         # Create a matplotlib figure and axis
-        self.fig, self.axes = plt.subplots(2, 1)
+        self.fig, self.plt_axes = plt.subplots(2, 1)
         self.canvas = FigureCanvasTkAgg(self.fig, master=self.root)
         self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
 
@@ -99,8 +99,7 @@ class MainApp:
         self.settings["pixel_size (um)"] = 0.71
         self.settings["frame rate (Hz)"] = 20
 
-        self.settings["frames"] = 0
-
+        self.settings["_trajectory"] = []
         self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "idle"
 
@@ -173,30 +172,30 @@ class MainApp:
         self.tracker_data = deque()
         self.stepper_data = deque()
 
-        self.axes[0].clear()
-        self.axes[1].clear()
+        self.plt_axes[0].clear()
+        self.plt_axes[1].clear()
 
-        self.axes[1].set_ylabel("Z (um)")
-        self.axes[1].set_xlabel("Time (s)")
-        self.axes[1].set_ylim(-10, 10)
-
-        if profile is not None:
-            profile.plot(
-                ax=self.axes[0], linestyle="--", color="lightgray", legend=False
-            )
-
-        (self.ax0_line,) = self.axes[0].plot([], [], "o", color="blue", alpha=0.3)
-        (self.ax1_line,) = self.axes[1].plot([], [], "o", color="red", alpha=0.3)
-
-        self.axes[0].set_ylabel("Focus (mm)")
-        self.axes[0].set_xlabel("Time (s)")
+        self.plt_axes[1].set_ylabel("Z (um)")
+        self.plt_axes[1].set_xlabel("Time (s)")
+        self.plt_axes[1].set_ylim(-10, 10)
 
         if profile is not None:
             profile.plot(
-                ax=self.axes[0], linestyle="--", color="lightgray", legend=False
+                ax=self.plt_axes[0], linestyle="--", color="lightgray", legend=False
             )
-            self.axes[0].set_xlim(0, profile.index[-1])
-            self.axes[1].set_xlim(0, profile.index[-1])
+            self.plt_axes[0].set_ylabel(profile.columns[0])
+
+        (self.ax0_line,) = self.plt_axes[0].plot([], [], "o", color="blue", alpha=0.3)
+        (self.ax1_line,) = self.plt_axes[1].plot([], [], "o", color="red", alpha=0.3)
+
+        self.plt_axes[0].set_xlabel("Time (s)")
+
+        if profile is not None:
+            profile.plot(
+                ax=self.plt_axes[0], linestyle="--", color="lightgray", legend=False
+            )
+            self.plt_axes[0].set_xlim(0, profile.index[-1])
+            self.plt_axes[1].set_xlim(0, profile.index[-1])
 
         self.fig.tight_layout()
         self.canvas.draw()
@@ -209,23 +208,26 @@ class MainApp:
                 self.stepper_done = True
             else:
                 self.stepper_data.append(data)
+                data = None
 
         if len(self.stepper_data) > 1:
-            time_index = self.stepper_app.axes.index("Time (s)")
-            focus_index = self.stepper_app.axes.index("Focus (mm)")
+            time_index = 0
+            y_index, _ = to_axis(self.plt_axes[0].get_ylabel())
             t = [data[time_index] for data in self.stepper_data]
-            z = [data[focus_index] for data in self.stepper_data]
+            z = [data[y_index + 1] for data in self.stepper_data]
 
             self.ax0_line.set_data(t, z)
-            self.axes[0].set_xlabel("Time (s)")  # Ensure the x-axis label is set
+            self.plt_axes[0].set_xlabel("Time (s)")  # Ensure the x-axis label is set
             self.canvas.draw()
 
         while not self.tracker_queue.empty():
             data = self.tracker_queue.get()
+            # ic("trackerdata", data)
             if data is SENTINEL:
                 self.tracker_done = True
             else:
                 self.tracker_data.append(data)
+                data = None
 
         if len(self.tracker_data) > 1:
             time_index = 0
@@ -235,15 +237,17 @@ class MainApp:
             z = [data[position_index] for data in self.tracker_data]
 
             self.ax1_line.set_data(t, z)
-            self.axes[1].set_xlabel("Time (s)")  # Ensure the x-axis label is set
-            self.axes[1].relim()
-            self.axes[1].autoscale_view()
+            self.plt_axes[1].relim()
+            self.plt_axes[1].autoscale_view()
             self.canvas.draw()
 
         if self.stepper_done and self.tracker_done and self.stepper_data:
             # Save data to file
             self.settings["_aquisition mode"] == "idle"
-            stepper_df = pd.DataFrame(self.stepper_data, columns=self.stepper_app.axes)
+            stepper_df = pd.DataFrame(
+                self.stepper_data,
+                columns=["Time (s)"] + list(self.stepper_app.axes.values()),
+            )
 
             cols = ["Frame"]
             for i, _ in enumerate(self.settings["rois"]):
@@ -255,7 +259,8 @@ class MainApp:
 
             print(f"Data saved in {create_hdf(self.settings, stepper_df, tracker_df)}")
 
-            self.stepper_data, self.tracker_data = [], []
+            self.stepper_data.clear()
+            self.tracker_data.clear()
 
         self.root.after(100, self.update_plot)
 
@@ -269,18 +274,14 @@ class MainApp:
         gcode = [
             f"G1 Z{current_focus:.3f} F10",
             "G93 S0.1",
-            f"G1 Z{current_focus + range:.3f} F1",
+            f"G1 Z{current_focus + range:.3f} F0.1",
             "G4 S0.05",
             "G93",
             f"G1 Z{current_focus:.3f} F10",
             f"M400",
         ]
 
-        self.init_plot(to_profile(gcode))
-        self.settings["_aquisition mode"] = "calibrate"
-        self.settings["_filename"] = increment_filename()
-        self.stepper_done, self.tracker_done = False, False
-        self.stepper_app.command_queue.put(gcode + ["G93 N0"])
+        self.go_trajectory(gcode, "calibrate")
 
     def create_trajectory(self):
         settings = {
@@ -309,42 +310,28 @@ class MainApp:
 
         if settings_editor.settings:
             self.settings["_trajectory"] = settings_editor.settings
-
             gcode = to_gcode(
                 self.settings["_trajectory"],
                 self.stepper_app.get_current_position(),
             )
-            self.settings["_profile"] = to_profile(gcode)
+            self.init_plot(to_profile(gcode))
 
-            self.axes[0].clear()
-            self.settings["_profile"].plot(
-                ax=self.axes, linestyle="--", legend=False, color="lightgray"
-            )
-
-            self.axes.set_ylabel(self.settings["_trajectory"]["axis"])
-            self.axes.set_xlabel("Time (s)")
-            self.fig.tight_layout()
-            self.canvas.draw()
-
-    def go_trajectory(self):
-        if self.settings["_trajectory"]:
-            gcode = to_gcode(
-                self.settings["_trajectory"],
-                self.stepper_app.get_current_position(),
-            )
-            self.settings["_profile"] = to_profile(gcode)
-            self.axes[0].clear()
-
-            self.settings["_aquisition mode"] = "measure"
-            self.settings["_filename"] = increment_filename()
-            self.stepper_app.command_queue.put(
-                to_gcode(
+    def go_trajectory(self, gcode=None, mode="measure"):
+        if gcode is None:
+            if self.settings["_trajectory"]:
+                gcode = to_gcode(
                     self.settings["_trajectory"],
                     self.stepper_app.get_current_position(),
                 )
-            )
-        else:
-            messagebox.showinfo("Error", "No trajectory defined")
+            else:
+                messagebox.showinfo("Error", "No trajectory defined")
+                return
+
+        self.init_plot(to_profile(gcode))
+        self.settings["_aquisition mode"] = mode
+        self.settings["_filename"] = increment_filename()
+        self.stepper_done, self.tracker_done = False, False
+        self.stepper_app.command_queue.put(gcode + ["G93 N0"])
 
 
 if __name__ == "__main__":

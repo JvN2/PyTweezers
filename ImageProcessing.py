@@ -258,17 +258,7 @@ class FrameConsumer:
                         self.main_root.focus_force()
                 n_frames += 1
 
-                if (
-                    acquisition_in_progress
-                    and (
-                        self.settings.get("_aquisition mode")
-                        in [
-                            "calibrate",
-                            "measure",
-                        ]
-                    )
-                    and frame_num != self.latest_processed_frame
-                ):
+                if acquisition_in_progress and frame_num != self.latest_processed_frame:
                     # Extract selected roi and save it
                     self.latest_processed_frame = frame_num
 
@@ -295,8 +285,7 @@ class FrameConsumer:
                 if len(self.selected_roi_frames) and not acquisition_in_progress:
                     if self.settings.get("_aquisition mode") == "calibrate":
                         self.save_frames_to_binary_file(self.settings["_filename"])
-                        self.selected_roi_frames = []
-                    self.settings["_aquisition mode"] = "done processing"
+                    self.selected_roi_frames.clear()
                     self.data_queue.put(SENTINEL)
 
             cv2.waitKey(10)
@@ -381,6 +370,7 @@ class FrameConsumer:
         self.main_root.focus_force()
 
     def save_frames_to_binary_file(self, filename: str):
+        filename = Path(filename).with_suffix(".bin")
         with open(filename, "wb") as f:
             for frame in self.selected_roi_frames:
                 frame.tofile(f)
