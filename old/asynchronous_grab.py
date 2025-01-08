@@ -24,6 +24,7 @@ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
 OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 """
+
 import sys
 from typing import Optional, Tuple
 
@@ -31,24 +32,26 @@ from vmbpy import *
 
 
 def print_preamble():
-    print('///////////////////////////////////////')
-    print('/// VmbPy Asynchronous Grab Example ///')
-    print('///////////////////////////////////////\n')
+    print("///////////////////////////////////////")
+    print("/// VmbPy Asynchronous Grab Example ///")
+    print("///////////////////////////////////////\n")
 
 
 def print_usage():
-    print('Usage:')
-    print('    python asynchronous_grab.py [/x] [-x] [camera_id]')
-    print('    python asynchronous_grab.py [/h] [-h]')
+    print("Usage:")
+    print("    python asynchronous_grab.py [/x] [-x] [camera_id]")
+    print("    python asynchronous_grab.py [/h] [-h]")
     print()
-    print('Parameters:')
-    print('    /x, -x      If set, use AllocAndAnnounce mode of buffer allocation')
-    print('    camera_id   ID of the camera to use (using first camera if not specified)')
+    print("Parameters:")
+    print("    /x, -x      If set, use AllocAndAnnounce mode of buffer allocation")
+    print(
+        "    camera_id   ID of the camera to use (using first camera if not specified)"
+    )
     print()
 
 
 def abort(reason: str, return_code: int = 1, usage: bool = False):
-    print(reason + '\n')
+    print(reason + "\n")
 
     if usage:
         print_usage()
@@ -63,10 +66,10 @@ def parse_args() -> Tuple[Optional[str], AllocationMode]:
     allocation_mode = AllocationMode.AnnounceFrame
     cam_id = ""
     for arg in args:
-        if arg in ('/h', '-h'):
+        if arg in ("/h", "-h"):
             print_usage()
             sys.exit(0)
-        elif arg in ('/x', '-x'):
+        elif arg in ("/x", "-x"):
             allocation_mode = AllocationMode.AllocAndAnnounceFrame
         elif not cam_id:
             cam_id = arg
@@ -84,12 +87,12 @@ def get_camera(camera_id: Optional[str]) -> Camera:
                 return vmb.get_camera_by_id(camera_id)
 
             except VmbCameraError:
-                abort('Failed to access Camera \'{}\'. Abort.'.format(camera_id))
+                abort("Failed to access Camera '{}'. Abort.".format(camera_id))
 
         else:
             cams = vmb.get_all_cameras()
             if not cams:
-                abort('No Cameras accessible. Abort.')
+                abort("No Cameras accessible. Abort.")
 
             return cams[0]
 
@@ -109,7 +112,7 @@ def setup_camera(cam: Camera):
 
 
 def frame_handler(cam: Camera, stream: Stream, frame: Frame):
-    print('{} acquired {}'.format(cam, frame), flush=True)
+    print("{} acquired {}".format(cam, frame), flush=True)
 
     cam.queue_frame(frame)
 
@@ -122,18 +125,20 @@ def main():
         with get_camera(cam_id) as cam:
 
             setup_camera(cam)
-            print('Press <enter> to stop Frame acquisition.')
+            print("Press <enter> to stop Frame acquisition.")
 
             try:
                 # Start Streaming with a custom a buffer of 10 Frames (defaults to 5)
-                cam.start_streaming(handler=frame_handler,
-                                    buffer_count=10,
-                                    allocation_mode=allocation_mode)
+                cam.start_streaming(
+                    handler=frame_handler,
+                    buffer_count=10,
+                    allocation_mode=allocation_mode,
+                )
                 input()
 
             finally:
                 cam.stop_streaming()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

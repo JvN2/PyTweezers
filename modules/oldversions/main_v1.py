@@ -23,15 +23,19 @@ def test_aquisition(tracker, image=None):
             cam = IMAQ.IMAQCamera()
             cam.setup_acquisition(mode="sequence", nframes=n_frames)
             cam.start_acquisition()
-            for _ in tqdm(range(n_frames), postfix='Acquiring images'):
+            for _ in tqdm(range(n_frames), postfix="Acquiring images"):
                 cam.wait_for_frame()
                 frame, info = cam.read_oldest_image(return_info=True)
-                rois = [get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords]
+                rois = [
+                    get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords
+                ]
                 queue_raw_data.put([info.frame_index, rois])
             cam.stop_acquisition()
         else:
-            for i in tqdm(range(n_frames), postfix='Using dummy image'):
-                rois = [get_roi(image, tracker.roi_size, coord) for coord in tracker.coords]
+            for i in tqdm(range(n_frames), postfix="Using dummy image"):
+                rois = [
+                    get_roi(image, tracker.roi_size, coord) for coord in tracker.coords
+                ]
                 queue_raw_data.put([i, rois])
         queue_raw_data.put(None)
 
@@ -52,13 +56,19 @@ def test_aquisition(tracker, image=None):
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
-            numbered_pars = [par for par in pars if '%' in par]
-            shared_pars = [par for par in pars if '%' not in par]
+            numbered_pars = [par for par in pars if "%" in par]
+            shared_pars = [par for par in pars if "%" not in par]
 
             result.columns = shared_pars + list(
-                np.reshape([[p.replace('%', f'{i}') for p in numbered_pars] for i in
-                            range(len(result.columns) // len(numbered_pars))], -1))
-            result.set_index('frame', inplace=True, drop=True)
+                np.reshape(
+                    [
+                        [p.replace("%", f"{i}") for p in numbered_pars]
+                        for i in range(len(result.columns) // len(numbered_pars))
+                    ],
+                    -1,
+                )
+            )
+            result.set_index("frame", inplace=True, drop=True)
         return result.sort_index()
 
     # Start combined acquisition and processing
@@ -68,9 +78,14 @@ def test_aquisition(tracker, image=None):
     n_frames = 100
 
     producer = [Thread(target=aquire_images, args=(tracker, raw_data, n_frames, image))]
-    consumers = [Thread(target=process_rois, args=(tracker, raw_data, processed_data, i), daemon=True) for
-                 i
-                 in range(n_cores)]
+    consumers = [
+        Thread(
+            target=process_rois,
+            args=(tracker, raw_data, processed_data, i),
+            daemon=True,
+        )
+        for i in range(n_cores)
+    ]
 
     t_start = time()
     for proces in consumers + producer:
@@ -79,24 +94,40 @@ def test_aquisition(tracker, image=None):
     for proces in consumers + producer:
         proces.join()
 
-    print(color_text(0, 100, 0,
-                     f'Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads'))
+    print(
+        color_text(
+            0,
+            100,
+            0,
+            f"Acquisition + processing time = {time() - t_start:.3f} s for {n_cores} processing threads",
+        )
+    )
 
     try:
-        results = get_queue(processed_data, pars=['frame', 'cpu', '%: X (pix)', '%: Y (pix)', '%: Z (um)', '%: A (a.u.)'])
+        results = get_queue(
+            processed_data,
+            pars=[
+                "frame",
+                "cpu",
+                "%: X (pix)",
+                "%: Y (pix)",
+                "%: Z (um)",
+                "%: A (a.u.)",
+            ],
+        )
         return results
     except ValueError:
         return None
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # set up lookup table
-    ref_filename = Path(r'data\data_024.tdms')
+    ref_filename = Path(r"data\data_024.tdms")
     tracker = Beads(ref_filename)
 
     # find bead coordinates
     from_file = True
-    filename = Path(r'data\data_024.jpg')
+    filename = Path(r"data\data_024.jpg")
     data = Traces(filename)
 
     if from_file:
@@ -104,14 +135,14 @@ if __name__ == '__main__':
     else:
         im = imread(str(filename))[:, :, 0]
         data.pars = tracker.find_beads(im, 200, 0.6, show=False)
-        data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
+        data.set_glob("roi (pix)", tracker.roi_size, "Image processing")
         data.to_file()
         im = None
 
     print(data.pars.tail(3))
 
     # acquire and process images
-    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
+    coords = np.asarray([data.pars["X0 (pix)"], data.pars["Y0 (pix)"]]).astype(int).T
     tracker.set_roi_coords(coords[:100])
     data.traces = test_aquisition(tracker, im)
     # data.to_file()
@@ -119,12 +150,12 @@ if __name__ == '__main__':
 
     if False:
         # plot positions
-        selected_cols = [col for col in data.data.columns if 'X (pix)' in col]
+        selected_cols = [col for col in data.data.columns if "X (pix)" in col]
         x = data.data[selected_cols].iloc[0].values
-        selected_cols = [col for col in data.data.columns if 'Y (pix)' in col]
+        selected_cols = [col for col in data.data.columns if "Y (pix)" in col]
         y = data.data[selected_cols].iloc[0].values
-        plt.imshow(im, cmap='Greys_r', origin='lower')
-        plt.scatter(y - 50, x - 50, s=80, facecolors='none', edgecolors='r')
+        plt.imshow(im, cmap="Greys_r", origin="lower")
+        plt.scatter(y - 50, x - 50, s=80, facecolors="none", edgecolors="r")
         # xy coords are not correct: to be solved
         # probably x and y direction mixed up
         plt.show()

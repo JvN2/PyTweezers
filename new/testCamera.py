@@ -8,11 +8,13 @@ FRAME_QUEUE_SIZE = 10
 FRAME_HEIGHT = 480
 FRAME_WIDTH = 640
 
+
 def resize_if_required(frame: Frame) -> np.ndarray:
     img = frame.as_opencv_image()
     if img.shape[0] != FRAME_HEIGHT or img.shape[1] != FRAME_WIDTH:
         img = cv2.resize(img, (FRAME_WIDTH, FRAME_HEIGHT))
     return img
+
 
 class FrameProducer(threading.Thread):
     def __init__(self, cam: Camera, frame_queue: queue.Queue):
@@ -36,6 +38,7 @@ class FrameProducer(threading.Thread):
         self.running = False
         self.cam.stop_streaming()
 
+
 class FrameConsumer(threading.Thread):
     def __init__(self, frame_queue: queue.Queue):
         super().__init__()
@@ -48,8 +51,8 @@ class FrameConsumer(threading.Thread):
             try:
                 frame = self.frame_queue.get(timeout=1)
                 img = resize_if_required(frame)
-                cv2.imshow('Frame', img)
-                if cv2.waitKey(10) & 0xFF == ord('q'):
+                cv2.imshow("Frame", img)
+                if cv2.waitKey(10) & 0xFF == ord("q"):
                     self.alive = False
             except queue.Empty:
                 continue
@@ -58,6 +61,7 @@ class FrameConsumer(threading.Thread):
     def stop(self):
         self.alive = False
         cv2.destroyAllWindows()
+
 
 class CameraApplication:
     def __init__(self):
@@ -105,15 +109,16 @@ class CameraApplication:
         input("Press 's' to stop the application...\n")
         self.stop_event.set()
 
+
 if __name__ == "__main__":
     with VmbSystem.get_instance() as vmb:
         app = CameraApplication()
         vmb.register_camera_change_handler(app)
-        
+
         stop_thread = threading.Thread(target=app.wait_for_stop_signal)
         stop_thread.start()
-        
+
         app.run()
-        
+
         stop_thread.join()
         vmb.unregister_camera_change_handler(app)

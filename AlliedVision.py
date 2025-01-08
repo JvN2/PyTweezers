@@ -141,7 +141,10 @@ class CameraApplication:
         self.producers_lock = threading.Lock()
         self.settings = settings
         self.consumer = FrameConsumer(
-            self.frame_queue, self.settings, root=root, data_queue=data_queue
+            self.frame_queue,
+            self.settings,
+            root=root,
+            data_queue=data_queue,
         )
 
     def __call__(self, cam: Camera, event: CameraEvent):
@@ -201,7 +204,7 @@ if __name__ == "__main__":
     settings["height (pix)"] = 400
     settings["width (pix)"] = 400
     settings["zoom"] = 2
-    app = CameraApplication(settings)
+    app = CameraApplication(settings, tracker=settings)
     threading.Thread(target=app.run).start()
     sleep(2)
     app.stop()

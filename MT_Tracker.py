@@ -2,12 +2,16 @@ import cv2
 import numpy as np
 from scipy.optimize import minimize, curve_fit
 from scipy.signal import find_peaks
+from scipy.ndimage import shift
 import matplotlib.pyplot as plt
 from matplotlib.ticker import ScalarFormatter
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from icecream import ic
 from tqdm import tqdm
 import tkinter as tk
+import warnings
+from pathlib import Path
+
 
 from ImageProcessing import load_bin_file
 from TraceIO import hdf_data, timeit
@@ -70,8 +74,10 @@ def quadratic_fit(data):
     res = minimize(error, p0, args=(x, y, z))
 
     a, b, c, d, e, f = res.x
-    x_max = (2 * b * d - c * e) / (c**2 - 4 * a * b)
-    y_max = (2 * a * e - c * d) / (c**2 - 4 * a * b)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        x_max = (2 * b * d - c * e) / (c**2 - 4 * a * b)
+        y_max = (2 * a * e - c * d) / (c**2 - 4 * a * b)
 
     return x_max, y_max
 
@@ -257,20 +263,26 @@ def find_peak2d(image, centered=True):
     return sub_pixel_max
 
 
-def find_bead_center(image, fft_mask, show=False):
+def find_bead_center(image, fft_mask, show=False, shift_image_to_center=False):
     fft = fft_mask * np.fft.fftshift(np.fft.fft2(image))
     autocorrelation = np.fft.ifftshift(
         np.abs(np.fft.ifft2(fft**2)) / np.prod(image.shape)
     )
 
-    peak = find_peak2d(autocorrelation)
-    coords = peak/2
+    coords = find_peak2d(autocorrelation) / 2
+
+    if shift_image_to_center:
+        image = shift(image, coords)
+        image[image == 0] = np.median(image)
+        image = np.real(np.fft.ifft2(np.fft.fft2(image) * np.fft.fftshift(fft_mask)))
+        coords *= 0
+        return image
 
     if show:
         imshow_multiple(
             [image, autocorrelation],
-            circles=[[*coords, 25], [*peak, 5]],
-            titles=["Image", "CC"],
+            circles=[[*coords, 15], [*coords * 2, 5]],
+            titles=[f"Image ({coords[0]:.2f})", "CC"],
         )
 
     return coords
@@ -386,19 +398,24 @@ class Tracker:
             root.withdraw()  # Hide the root window
             filename = tk.filedialog.askopenfilename(
                 title="Select a file",
-                filetypes=(("HDF5 files", "*.hdf5 *.h5"), ("All files", "*.*")),
+                filetypes=(("bin files", "*.bin"), ("All files", "*.*")),
             )
             if not filename:
                 raise ValueError("No file selected")
 
-        # correct focus for recording errors and refractive index
+        filename = Path(filename).with_suffix(".hdf")
+        self.filename = filename
+
+        # correct focus for Focus recording errors
         focus = hdf_data(filename).traces["Focus (mm)"].values
         t = hdf_data(filename).traces["Time (s)"].values
         fit = np.polyval(np.polyfit(t, focus, 1), t)
+
+        # correct for refractive index
         self.z_lut = fit * 1000 / 1.3333
 
         images = load_bin_file(filename)
-        self.mask = bandpass_filter(images[0], high=2, low=35, width=2.5, centered=True)
+        self.mask = bandpass_filter(images[0], high=8, low=25, width=2.5, centered=True)
 
         self.lut = self._create_lut(images, average=None)
         self.z_lut -= find_focus(images, self.z_lut, show=False)
@@ -415,7 +432,7 @@ class Tracker:
 
         resample = True
         if resample:
-            self._resample_lut(dz=0.5, show=True)
+            self._resample_lut(dz=0.5, show=False)
 
     def _create_lut(self, images, average=None):
         lut = [self.mask * np.fft.fftshift(np.abs(np.fft.fft2(im))) for im in images]
@@ -538,10 +555,14 @@ class Tracker:
         # weight = np.exp(-((z_ref[selection] - z_ref[index]) ** 2) / width**2)
         weight = np.ones_like(self.z_lut[selection])
 
-        poly = np.polyfit(
-            self.z_lut[selection], diff[selection], 2, w=np.asarray(weight)
-        )
+        # Suppress warnings for np.polyfit()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            poly = np.polyfit(
+                self.z_lut[selection], diff[selection], 2, w=np.asarray(weight)
+            )
         new_z = -poly[1] / (2 * poly[0])
+        min_value = np.polyval(poly, new_z)
 
         if show:
             plt.plot(self.z_lut, diff, marker="o")
@@ -556,43 +577,42 @@ class Tracker:
             plt.ylim([0, 1.3 * np.max(diff)])
             plt.show()
 
-        return new_z
-    
+        return new_z, 1 / min_value
 
-def get_xy(image, filter):
-    find_bead_center(image, filter, show = True)
-    # fft_image = np.fft.fft2(image)
-    # fft_filtered = fft_image * filter
+    def get_coords(self, images, show=False):
+        coords = np.asarray(
+            [
+                np.append(find_bead_center(image, self.mask), self._get_z(image))
+                for image in images
+            ]
+        )
 
-    # cross_correlation = np.fft.fftshift(np.fft.ifft2(fft_filtered * np.flip(np.conjugate(fft_filtered))))
-
-    # cc = np.abs(cross_correlation)
-    # xy = find_peak2d(cc)/2.0
-    # print(xy)
-
-
-    
-    # Display the original image and the cross-correlation
-    # imshow_multiple([image, cc])
+        if show:
+            colors = ["k", "r", "b", "g"]
+            labels = ["X (pix)", "Y (pix)", "Z (um)", "A (a.u)"]
+            for i, coord in enumerate(coords.T):
+                plt.plot(
+                    coord,
+                    marker="o",
+                    alpha=0.3,
+                    color=colors[i],
+                    linestyle="None",
+                    label=labels[i],
+                )
+                plt.xlabel("frame")
+                plt.legend()
+            plt.show()
+        return coords
 
 
 if __name__ == "__main__":
-    filename = r"data\data_006.hdf"
-    filename = r"data\data_153.hdf"
+    filename1 = r"data\data_006.hdf"
+    filename2 = r"data\data_153.hdf"
     # filename = r"d:\users\noort\data\20241219\data_002.hdf"
     # filename = r"d:\users\noort\data\20241220\data_003.hdf"
-    tracker = Tracker(filename)
-    images = load_bin_file(filename)
-    c = len(images)//2
-    c = 35
-    selected_images = [images[i] for i in [0, c, -1]]
-
-    filter = bandpass_filter(images[0], 4, 20, centered=True)
-    xy = find_bead_center(images[c], filter, show=True)
-
-    # imshow_multiple(selected_images, vrange = [20,150])
-
-                    
+    tracker = Tracker(filename2)
+    images = load_bin_file(filename2)
+    tracker.get_coords(images, show=True)
 
     if False:
         # test()

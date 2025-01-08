@@ -1067,7 +1067,14 @@ class hdf_data(object):
         return parameters
 
     def set_settings(self, settings):
+        rois = settings.get("rois", None)
         self.settings = settings
+        if rois is not None:
+            self.settings.pop("rois")
+            for label, roi in enumerate(rois):
+                self.label = str(label)
+                self.set_parameter("X0 (pix)", roi[0], type="local")
+                self.set_parameter("Y0 (pix)", roi[0], type="local")
         return
 
 
@@ -1383,7 +1390,17 @@ if __name__ == "__main__":
 
     if True:
         filename = rf"data_001.bin"
-        print(create_hdf(None, pd.DataFrame(), pd.DataFrame()))
+        filename = r"d:\users\Administrator\data\20250108\data_065.hdf"
+        data = hdf_data(filename)
+        # ic(data.traces, data.list_labels(), data.list_channels())
+        if data.list_channels():
+            data.read(filename, "0")
+            t = data.traces["Time (s)"]
+            z = data.traces["Z (um)"]
+        plt.plot(t, z, "o", fillstyle="none")
+        plt.show()
+
+        # print(create_hdf(None, pd.DataFrame(), pd.DataFrame()))
 
         # data.read(filename, "0")
         # ic(data.list_channels())

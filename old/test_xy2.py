@@ -4,11 +4,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 beads = Beads()
-filename = Path(r'C:\tmp\TeezersOSU\20230408\focus_lut.avi')
+filename = Path(r"C:\tmp\TeezersOSU\20230408\focus_lut.avi")
 images = beads.read_avi(filename)
 im = images[2]
 
-shift =-6
+shift = -6
 for shift in [-8, -6, -4]:
     im = np.asarray([np.roll(l, shift) for l in im])
 
@@ -19,5 +19,5 @@ for shift in [-8, -6, -4]:
     angle_im = np.angle(fft_im)
     # plt.imshow(angle_im, cmap = 'Greys_r', vmax=np.percentile(angle_im, 99))
 
-    plt.plot(angle_im[64,:])
+    plt.plot(angle_im[64, :])
 plt.show()

@@ -1,7 +1,7 @@
 import serial
 import time
 
-gcode = 'M114'
+gcode = "M114"
 with serial.Serial("COM3", 115200) as serial_connection:
     time.sleep(2)  # Wait for the connection to establish
     if serial_connection.is_open:

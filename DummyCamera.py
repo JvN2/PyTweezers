@@ -8,6 +8,7 @@ from AlliedVision import FrameProducer
 
 try:
     from vmbpy import *
+
     DUMMY = False
 except ImportError:
     DUMMY = True
@@ -102,7 +103,6 @@ class CameraApplication:
         else:
             self.vmb = None
 
-
     def get_camera_id(self):
         return "dummy_camera" if DUMMY else "allied_vision_camera"
 
@@ -110,7 +110,7 @@ class CameraApplication:
         self.settings = settings
         self.frame_nr = -1
         self.running = True
-        
+
         if self.vmb:
             with self.vmb:
                 for cam in self.vmb.get_all_cameras():
@@ -120,7 +120,6 @@ class CameraApplication:
         else:
             self.producer_thread = threading.Thread(target=self._produce_frames)
             self.producer_thread.start()
-
 
         self.consumer_thread = threading.Thread(target=self._consume_frames)
         self.consumer_thread.start()

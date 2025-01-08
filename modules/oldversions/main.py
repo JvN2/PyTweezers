@@ -39,10 +39,12 @@ def test_aquisition(tracker, image=None):
             cam = IMAQ.IMAQCamera()
             cam.setup_acquisition(mode="sequence", nframes=n_frames)
             cam.start_acquisition()
-            for _ in tqdm(range(n_frames), postfix='Acquiring images'):
+            for _ in tqdm(range(n_frames), postfix="Acquiring images"):
                 cam.wait_for_frame()
                 frame, info = cam.read_oldest_image(return_info=True)
-                rois = [get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords]
+                rois = [
+                    get_roi(frame, tracker.roi_size, coord) for coord in tracker.coords
+                ]
 
                 empty.acquire()
                 mutex.acquire()
@@ -53,8 +55,13 @@ def test_aquisition(tracker, image=None):
 
             cam.stop_acquisition()
         else:
-            for frame_index in tqdm(range(n_frames), postfix='Acquiring images: Simulation using saved image'):
-                rois = [get_roi(image, tracker.roi_size, coord) for coord in tracker.coords]
+            for frame_index in tqdm(
+                range(n_frames),
+                postfix="Acquiring images: Simulation using saved image",
+            ):
+                rois = [
+                    get_roi(image, tracker.roi_size, coord) for coord in tracker.coords
+                ]
 
                 empty.acquire()
                 mutex.acquire()
@@ -79,18 +86,27 @@ def test_aquisition(tracker, image=None):
             empty.release()
 
             result = [tracker.get_xyza(*roi) for roi in item[1]]
-            result = np.asarray(np.append([item[0], identifier], np.reshape(result, (-1))))
+            result = np.asarray(
+                np.append([item[0], identifier], np.reshape(result, (-1)))
+            )
 
             processed_data.put(result)
-            if processed_data.qsize() >= n_frames-1:
+            if processed_data.qsize() >= n_frames - 1:
                 break
 
     def get_queue(q, pars=None):
         result = pd.DataFrame([q.get() for _ in range(q.qsize())])
         if pars is not None:
-            result.columns = ['frame', 'cpu' ] + list(
-                np.reshape([[f'{i}: {p}' for p in pars] for i in range(len(result.columns) // len(pars))], -1))
-            result.set_index('frame', inplace=True, drop=True)
+            result.columns = ["frame", "cpu"] + list(
+                np.reshape(
+                    [
+                        [f"{i}: {p}" for p in pars]
+                        for i in range(len(result.columns) // len(pars))
+                    ],
+                    -1,
+                )
+            )
+            result.set_index("frame", inplace=True, drop=True)
         return result.sort_index()
 
     # Start combined acquisition and processing
@@ -99,28 +115,36 @@ def test_aquisition(tracker, image=None):
     processed_data = Queue()
 
     producer = [Thread(target=aquire_images, args=(tracker, n_frames, image))]
-    consumers = [Thread(target=process_rois, args=(tracker, n_frames, processed_data, i), daemon=True) for i
-                 in range(n_cores)]
+    consumers = [
+        Thread(
+            target=process_rois,
+            args=(tracker, n_frames, processed_data, i),
+            daemon=True,
+        )
+        for i in range(n_cores)
+    ]
     for proces in consumers + producer:
         proces.start()
 
     for proces in consumers + producer:
         proces.join()
 
-    results = get_queue(processed_data, pars=['X (pix)', 'Y (pix)', 'Z (um)', 'A (a.u.)'])
+    results = get_queue(
+        processed_data, pars=["X (pix)", "Y (pix)", "Z (um)", "A (a.u.)"]
+    )
 
     return results
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     print()
     # set up lookup table
-    ref_filename = Path(r'data\data_024.tdms')
+    ref_filename = Path(r"data\data_024.tdms")
     tracker = Beads(ref_filename)
 
     # find bead coordinates
     from_file = True
-    filename = Path(r'data\data_024.jpg')
+    filename = Path(r"data\data_024.jpg")
     data = Traces(filename)
 
     if from_file:
@@ -128,14 +152,14 @@ if __name__ == '__main__':
     else:
         im = imread(str(filename))[:, :, 0]
         data.pars = tracker.find_beads(im, 200, 0.6, show=False)
-        data.set_glob('roi (pix)', tracker.roi_size, 'Image processing')
+        data.set_glob("roi (pix)", tracker.roi_size, "Image processing")
         data.to_file()
         im = None
 
     print(data.pars.tail(3))
 
     # acquire and process images
-    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
+    coords = np.asarray([data.pars["X0 (pix)"], data.pars["Y0 (pix)"]]).astype(int).T
     tracker.set_roi_coords(coords[:100])
     data.traces = test_aquisition(tracker, im)
     # data.to_file()
@@ -143,12 +167,12 @@ if __name__ == '__main__':
 
     if False:
         # plot positions
-        selected_cols = [col for col in data.data.columns if 'X (pix)' in col]
+        selected_cols = [col for col in data.data.columns if "X (pix)" in col]
         x = data.data[selected_cols].iloc[0].values
-        selected_cols = [col for col in data.data.columns if 'Y (pix)' in col]
+        selected_cols = [col for col in data.data.columns if "Y (pix)" in col]
         y = data.data[selected_cols].iloc[0].values
-        plt.imshow(im, cmap='Greys_r', origin='lower')
-        plt.scatter(y - 50, x - 50, s=80, facecolors='none', edgecolors='r')
+        plt.imshow(im, cmap="Greys_r", origin="lower")
+        plt.scatter(y - 50, x - 50, s=80, facecolors="none", edgecolors="r")
         # xy coords are not correct: to be solved
         # probably x and y direction mixed up
         plt.show()

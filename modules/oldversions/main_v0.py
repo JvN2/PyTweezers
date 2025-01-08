@@ -30,11 +30,11 @@ if not sys.warnoptions:
 def time_it(f):
     @wraps(f)
     def wrap(*args, **kw):
-        print(f'Running: {f.__name__:25s}', end='')
+        print(f"Running: {f.__name__:25s}", end="")
         ts = time.time()
         result = f(*args, **kw)
         te = time.time()
-        print(f'-> {te - ts:9.3f} s')
+        print(f"-> {te - ts:9.3f} s")
         time.sleep(3)
         return result
 
@@ -54,15 +54,15 @@ def aquire_images(n_frames=100, show=True):
 
     cam.setup_acquisition(mode="sequence", nframes=n_frames)
     cam.start_acquisition()
-    cv2.namedWindow('live cam', cv2.WINDOW_NORMAL)
+    cv2.namedWindow("live cam", cv2.WINDOW_NORMAL)
 
     for i in tqdm(range(n_frames)):
         cam.wait_for_frame()
         frame, info = cam.read_oldest_image(return_info=True)
         if show:
             im = get_roi(frame, 500)
-            cv2.imshow('live cam', frame)
-            if cv2.waitKey(5) & 0xFF == ord('q'):
+            cv2.imshow("live cam", frame)
+            if cv2.waitKey(5) & 0xFF == ord("q"):
                 break
             # plt.imshow(im, cmap='gray')
             # plt.show()
@@ -81,7 +81,15 @@ def using_pool(im, coords, n_frames):
     collect_results = []
     with mp.Pool() as pool:
         for frame in range(n_frames):
-            collect_results.append(pool.apply_async(tracker.process_image, [im, coords, ]))
+            collect_results.append(
+                pool.apply_async(
+                    tracker.process_image,
+                    [
+                        im,
+                        coords,
+                    ],
+                )
+            )
         xyz = [np.asarray(res.get()) for res in collect_results]
     return xyz
 
@@ -101,9 +109,9 @@ def using_thread_pool(im, coords, n_frames):
     return xyz
 
 
-if __name__ == '__main__':
-    filename = Path(r'data\data_024.jpg')
-    ref_filename = Path(r'data\data_024.tdms')
+if __name__ == "__main__":
+    filename = Path(r"data\data_024.jpg")
+    ref_filename = Path(r"data\data_024.tdms")
     # filename = r'data\test.jpg'
     # frame = aquire_images(500)
     # cv2.imwrite(r'c:\tmp\test.jpg', frame)
@@ -122,7 +130,7 @@ if __name__ == '__main__':
         data.pars = tracker.find_beads(im, 100, 200, 0.5, show=False)
         data.to_file()
 
-    coords = np.asarray([data.pars['X0 (pix)'], data.pars['Y0 (pix)']]).astype(int).T
+    coords = np.asarray([data.pars["X0 (pix)"], data.pars["Y0 (pix)"]]).astype(int).T
     n_frames = 10
 
     using_list_comprehension(im, coords, n_frames)
@@ -131,6 +139,9 @@ if __name__ == '__main__':
     xyz = using_thread_pool(im, coords, n_frames)
     print()
 
-    columns = np.reshape([[f'{i}: X (pix)', f'{i}: Y (pix)', f'{i}: Z (um)'] for i in data.pars.index], [-1])
+    columns = np.reshape(
+        [[f"{i}: X (pix)", f"{i}: Y (pix)", f"{i}: Z (um)"] for i in data.pars.index],
+        [-1],
+    )
     data.traces = pd.DataFrame(xyz, columns=columns)
     print(data.traces.tail())

@@ -55,7 +55,6 @@ class FrameProducer(threading.Thread):
                 enqueue_frame(self.frame_queue, 0, frame_cpy)
         cam.queue_frame(frame)
 
-
     def setup_camera(self):
         adjust_cam_setting(self.cam, "Height", FRAME_HEIGHT)
         adjust_cam_setting(self.cam, "Width", FRAME_WIDTH)

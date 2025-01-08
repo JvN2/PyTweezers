@@ -10,11 +10,13 @@ FRAME_QUEUE_SIZE = 10
 FRAME_HEIGHT = 480
 FRAME_WIDTH = 640
 
+
 def try_put_frame(q: queue.Queue, cam_id: str, frame: numpy.ndarray):
     try:
         q.put_nowait((cam_id, frame))
     except queue.Full:
         pass
+
 
 class Webcam:
     def __init__(self, cam_id=0):
@@ -39,20 +41,26 @@ class Webcam:
             if ret:
                 frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
                 # Ensure the frame is in the correct format
-                if frame.shape == (FRAME_HEIGHT, FRAME_WIDTH, 3) and frame.dtype == numpy.uint8:
+                if (
+                    frame.shape == (FRAME_HEIGHT, FRAME_WIDTH, 3)
+                    and frame.dtype == numpy.uint8
+                ):
                     try_put_frame(self.frame_queue, self.get_id(), frame)
                 else:
-                    print(f"Captured frame has invalid shape or type: {frame.shape}, {frame.dtype}")
+                    print(
+                        f"Captured frame has invalid shape or type: {frame.shape}, {frame.dtype}"
+                    )
             threading.Event().wait(1 / 30)  # Simulate 30 FPS
 
     def get_id(self):
-        return f'webcam_{self.cam_id}'
+        return f"webcam_{self.cam_id}"
 
     def get_frame(self):
         try:
             return self.frame_queue.get_nowait()
         except queue.Empty:
             return None
+
 
 class FrameConsumer:
     def __init__(self, frame_queue: queue.Queue):
@@ -67,18 +75,24 @@ class FrameConsumer:
                 # Ensure the frame is a valid NumPy array
                 if isinstance(frame, numpy.ndarray):
                     # Ensure the frame has the correct shape and type
-                    if frame.shape == (FRAME_HEIGHT, FRAME_WIDTH, 3) and frame.dtype == numpy.uint8:
+                    if (
+                        frame.shape == (FRAME_HEIGHT, FRAME_WIDTH, 3)
+                        and frame.dtype == numpy.uint8
+                    ):
                         # Process the frame (dummy processing here)
                         cv2.imshow(cam_id, frame)
                     else:
-                        print(f"Invalid frame shape or type: {frame.shape}, {frame.dtype}")
+                        print(
+                            f"Invalid frame shape or type: {frame.shape}, {frame.dtype}"
+                        )
                 else:
                     print(f"Invalid frame type: {type(frame)}")
             if cv2.waitKey(10) == 13 or not self.running:  # 13 is the Enter key
                 cv2.destroyAllWindows()
                 alive = False
 
-        print('\'FrameConsumer\' terminated.')
+        print("'FrameConsumer' terminated.")
+
 
 class CameraApplication:
     def __init__(self):
@@ -90,17 +104,18 @@ class CameraApplication:
 
     def __call__(self, cam: Webcam, event: str):
         # New camera was detected. Create FrameProducer, add it to active FrameProducers
-        if event == 'Detected':
+        if event == "Detected":
             with self.producers_lock:
                 self.producers[cam.get_id()] = FrameProducer(cam, self.frame_queue)
                 self.producers[cam.get_id()].start()
 
         # An existing camera was disconnected, stop associated FrameProducer.
-        elif event == 'Missing':
+        elif event == "Missing":
             with self.producers_lock:
                 producer = self.producers.pop(cam.get_id())
                 producer.stop()
                 producer.join()
+
 
 class FrameProducer:
     def __init__(self, cam: Webcam, frame_queue: queue.Queue):
@@ -122,11 +137,12 @@ class FrameProducer:
                 try_put_frame(self.frame_queue, self.cam.get_id(), frame)
             threading.Event().wait(1 / 30)  # Simulate 30 FPS
 
+
 if __name__ == "__main__":
     cam_app = CameraApplication()
     webcam = Webcam()
-    cam_app(webcam, 'Detected')
+    cam_app(webcam, "Detected")
     webcam.start()
     cam_app.consumer.run()
     webcam.stop()
-    cam_app(webcam, 'Missing')
+    cam_app(webcam, "Missing")

@@ -11,17 +11,17 @@ def time_it(f):
     @wraps(f)
     def wrap(*args, **kw):
         color = [0, 100, 0]
-        print(color_text(*color, f'Running: {f.__name__:25s}'), end='')
+        print(color_text(*color, f"Running: {f.__name__:25s}"), end="")
         ts = time()
         result = f(*args, **kw)
         te = time()
-        print(color_text(*color, f'-> {te - ts:9.3f} s'))
+        print(color_text(*color, f"-> {te - ts:9.3f} s"))
         return result
 
     return wrap
 
 
-def show_image(image, title='Image'):
+def show_image(image, title="Image"):
     if not cv2.getWindowProperty():
         cv2.namedWindow(title, cv2.WINDOW_NORMAL)
     cv2.imshow(title, image)
