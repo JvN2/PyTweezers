@@ -17,7 +17,7 @@ STEPPER_AXES = {
     "Y": "Y (mm)",
     "Z": "Focus (mm)",
     "A": "Shift (mm)",
-    "B": "Rotations (turns)",
+    "B": "Rotation (turns)",
 }
 
 
@@ -288,8 +288,8 @@ if __name__ == "__main__":
 
     # print(convert_to_section(0, 0, 10, 0, 1, 8, 0.1))
 
-    # stepper_app = StepperApplication(port="COM5")
-    # stepper_app.start()
+    stepper_app = StepperApplication(port="COM3")
+    stepper_app.start()
 
     trajectory = {
         "axis": "Focus (mm)",

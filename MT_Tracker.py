@@ -238,10 +238,12 @@ def find_peak2d(image, centered=True):
     max_index = np.argmax(image)
     max_indices = np.asarray(np.unravel_index(max_index, image.shape))
 
+    image /= np.sum(image)
     roi = image[
         max_indices[0] - 1 : max_indices[0] + 2,
         max_indices[1] - 1 : max_indices[1] + 2,
     ]
+
     sub_pixel_max = quadratic_fit(roi)
     sub_pixel_max = np.asarray(
         (
@@ -260,8 +262,9 @@ def find_bead_center(image, fft_mask, show=False):
     autocorrelation = np.fft.ifftshift(
         np.abs(np.fft.ifft2(fft**2)) / np.prod(image.shape)
     )
+
     peak = find_peak2d(autocorrelation)
-    coords = peak / 2
+    coords = peak/2
 
     if show:
         imshow_multiple(
@@ -554,15 +557,42 @@ class Tracker:
             plt.show()
 
         return new_z
+    
+
+def get_xy(image, filter):
+    find_bead_center(image, filter, show = True)
+    # fft_image = np.fft.fft2(image)
+    # fft_filtered = fft_image * filter
+
+    # cross_correlation = np.fft.fftshift(np.fft.ifft2(fft_filtered * np.flip(np.conjugate(fft_filtered))))
+
+    # cc = np.abs(cross_correlation)
+    # xy = find_peak2d(cc)/2.0
+    # print(xy)
+
+
+    
+    # Display the original image and the cross-correlation
+    # imshow_multiple([image, cc])
 
 
 if __name__ == "__main__":
     filename = r"data\data_006.hdf"
-    # filename = r"data\data_153.hdf"
+    filename = r"data\data_153.hdf"
     # filename = r"d:\users\noort\data\20241219\data_002.hdf"
-    filename = r"d:\users\noort\data\20241220\data_003.hdf"
+    # filename = r"d:\users\noort\data\20241220\data_003.hdf"
     tracker = Tracker(filename)
-    # test2(filename)
+    images = load_bin_file(filename)
+    c = len(images)//2
+    c = 35
+    selected_images = [images[i] for i in [0, c, -1]]
+
+    filter = bandpass_filter(images[0], 4, 20, centered=True)
+    xy = find_bead_center(images[c], filter, show=True)
+
+    # imshow_multiple(selected_images, vrange = [20,150])
+
+                    
 
     if False:
         # test()

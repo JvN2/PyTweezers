@@ -7,9 +7,10 @@ from icecream import ic
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.animation as animation
-from TraceIO import increment_filename, create_hdf
+from TraceIO import increment_filename, create_hdf, hdf_data
 from MT_steppers import StepperApplication, to_gcode, to_profile, to_axis
 from MT_settings import SettingsEditor
+from MT_Tracker import Tracker
 from time import sleep
 from collections import deque
 import queue
@@ -39,7 +40,7 @@ class MainApp:
         self.stepper_data = deque()
         self.stepper_done = True
         self.stepper_app = StepperApplication(
-            port="COM5", data_queue=self.stepper_queue
+            port="COM3", data_queue=self.stepper_queue
         )
         self.stepper_app.start()
 
@@ -56,16 +57,28 @@ class MainApp:
         menubar.add_cascade(label="File", menu=file_menu)
 
         measure_menu = tk.Menu(menubar, tearoff=0)
-        measure_menu.add_command(label="Change settings", command=self.change_settings)
-        measure_menu.add_separator()
-        measure_menu.add_command(label="Stop", command=self.stop_camera)
-        measure_menu.add_command(label="Start", command=self.start_camera)
-        measure_menu.add_separator()
-        measure_menu.add_command(label="Calibrate LUT", command=self.calibrate_lut)
-        measure_menu.add_command(label="Trajectory", command=self.create_trajectory)
         measure_menu.add_command(label="Go", command=self.go_trajectory)
-        menubar.add_cascade(label="Measure", menu=measure_menu)
+        measure_menu.add_command(
+            label="Change trajectory...", command=self.create_trajectory
+        )
 
+        measure_menu.add_separator()
+        lut_menu = tk.Menu(measure_menu, tearoff=0)
+        lut_menu.add_command(label="Measure", command=self.calibrate_lut)
+        lut_menu.add_command(label="From file ...", command=self.change_lut)
+        measure_menu.add_cascade(label="Look Up Table", menu=lut_menu)
+
+        measure_menu.add_separator()
+        measure_menu.add_command(
+            label="Change settings...", command=self.change_settings
+        )
+        measure_menu.add_separator()
+        camera_menu = tk.Menu(measure_menu, tearoff=0)
+        camera_menu.add_command(label="Start", command=self.start_camera)
+        camera_menu.add_command(label="Stop", command=self.stop_camera)
+        measure_menu.add_cascade(label="Camera", menu=camera_menu)
+
+        menubar.add_cascade(label="Measure", menu=measure_menu)
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
         help_menu.add_command(label="Test", command=self.test)
@@ -102,6 +115,8 @@ class MainApp:
         self.settings["_trajectory"] = []
         self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "idle"
+
+        self.settings["_tracker"] = Tracker(r"data\data_153.hdf")
 
     def start_camera(self):
         self.camera_app = CameraApplication(
@@ -160,13 +175,29 @@ class MainApp:
         )
 
     def test(self):
-        print("Test")
+        print("Test function")
         # df = self.stepper_app.get_dataframe()
         # ic(df)
         # plt.plot(df["Z"])
         # plt.show()
         # create_hdf(self.settings["_filename"])
-        print(self.stepper_app.get_current_position())
+        # print(self.stepper_app.get_current_position())
+
+    def change_lut(self):
+        if self.tracker_queue.empty():
+            lut_filename = tk.filedialog.askopenfilename(
+                title="Open LUT file",
+                filetypes=[("Binary files", "*.bin")],
+                initialfile=r"data\data_006.bin",
+            )
+            if lut_filename:
+                self.stop_camera()
+                sleep(0.5)
+                self.settings["_tracker"] = Tracker(lut_filename)
+                self.start_camera()
+                print(f"New LUT: {self.settings['_tracker'].filename}")
+        else:
+            messagebox.showinfo("Error", "Wait for acquisition to finish")
 
     def init_plot(self, profile=None):
         self.tracker_data = deque()
@@ -177,7 +208,7 @@ class MainApp:
 
         self.plt_axes[1].set_ylabel("Z (um)")
         self.plt_axes[1].set_xlabel("Time (s)")
-        self.plt_axes[1].set_ylim(-10, 10)
+        self.plt_axes[1].set_ylim(-15, 15)
 
         if profile is not None:
             profile.plot(
@@ -197,11 +228,12 @@ class MainApp:
             self.plt_axes[0].set_xlim(0, profile.index[-1])
             self.plt_axes[1].set_xlim(0, profile.index[-1])
 
+        self.plt_axes[0].set_title("Magnetic Tweezers")
         self.fig.tight_layout()
         self.canvas.draw()
 
     def update_plot(self):
-
+        # Update stepper log
         while not self.stepper_queue.empty():
             data = self.stepper_queue.get()
             if data is SENTINEL:
@@ -218,11 +250,11 @@ class MainApp:
 
             self.ax0_line.set_data(t, z)
             self.plt_axes[0].set_xlabel("Time (s)")  # Ensure the x-axis label is set
+            self.plt_axes[0].set_title(self.settings["_filename"])
             self.canvas.draw()
 
         while not self.tracker_queue.empty():
             data = self.tracker_queue.get()
-            # ic("trackerdata", data)
             if data is SENTINEL:
                 self.tracker_done = True
             else:
@@ -230,20 +262,31 @@ class MainApp:
                 data = None
 
         if len(self.tracker_data) > 1:
-            time_index = 0
-            position_index = 1
-            t = [data[time_index] for data in self.tracker_data]
+            # get colum of z (um) of selected roi from tracker data
+            index = self.settings["selected"] * 4 + 3
+            t = [data[0] for data in self.tracker_data]
             t = (np.asarray(t) - t[0]) / self.settings["frame rate (Hz)"]
-            z = [data[position_index] for data in self.tracker_data]
-
+            z = [data[index] for data in self.tracker_data]
             self.ax1_line.set_data(t, z)
             self.plt_axes[1].relim()
             self.plt_axes[1].autoscale_view()
             self.canvas.draw()
+        else:
+            # Read data from hdf file
+            data = hdf_data(self.settings["_filename"])
+            if data.list_channels():
+                data.read(
+                    self.settings["_filename"], label=str(self.settings["selected"])
+                )
+                t = data.traces["Time (s)"]
+                z = data.traces["Z (um)"]
+                self.ax1_line.set_data(t, z)
+                self.plt_axes[1].relim()
+                self.plt_axes[1].autoscale_view()
+                self.canvas.draw()
 
         if self.stepper_done and self.tracker_done and self.stepper_data:
             # Save data to file
-            self.settings["_aquisition mode"] == "idle"
             stepper_df = pd.DataFrame(
                 self.stepper_data,
                 columns=["Time (s)"] + list(self.stepper_app.axes.values()),
@@ -251,16 +294,20 @@ class MainApp:
 
             cols = ["Frame"]
             for i, _ in enumerate(self.settings["rois"]):
-                cols.append(f"A{i} (a.u.)")
                 cols.append(f"X{i} (pix)")
                 cols.append(f"Y{i} (pix)")
                 cols.append(f"Z{i} (um)")
+                cols.append(f"A{i} (a.u.)")
             tracker_df = pd.DataFrame(self.tracker_data, columns=cols)
 
-            print(f"Data saved in {create_hdf(self.settings, stepper_df, tracker_df)}")
+            print(
+                f"Data saved in {create_hdf(self.settings.copy(), stepper_df, tracker_df)}"
+            )
 
             self.stepper_data.clear()
             self.tracker_data.clear()
+
+            self.settings["_aquisition mode"] == "idle"
 
         self.root.after(100, self.update_plot)
 
@@ -298,7 +345,7 @@ class MainApp:
             "target": [0.02, -10, 10, 0.001, "linear"],
             "wait (s)": [1, 0, 10, 0.1, "linear"],
             "move (s)": [3, 0, 10, 0.1, "linear"],
-            "dwell (s)": [-6, -100, 100, 0.1, "linear"],
+            "dwell (s)": [0, -100, 100, 0.1, "linear"],
             "repeat": [1, 1, 4, 1, "linear"],
         }
         if self.settings["_trajectory"]:
@@ -317,21 +364,25 @@ class MainApp:
             self.init_plot(to_profile(gcode))
 
     def go_trajectory(self, gcode=None, mode="measure"):
-        if gcode is None:
-            if self.settings["_trajectory"]:
-                gcode = to_gcode(
-                    self.settings["_trajectory"],
-                    self.stepper_app.get_current_position(),
-                )
-            else:
-                messagebox.showinfo("Error", "No trajectory defined")
-                return
+        if len(self.settings["rois"]) == 0:
+            messagebox.showinfo("Error", "No ROIs defined")
+            return
+        else:
+            if gcode is None:
+                if self.settings["_trajectory"]:
+                    gcode = to_gcode(
+                        self.settings["_trajectory"],
+                        self.stepper_app.get_current_position(),
+                    )
+                else:
+                    messagebox.showinfo("Error", "No trajectory defined")
+                    return
 
-        self.init_plot(to_profile(gcode))
-        self.settings["_aquisition mode"] = mode
-        self.settings["_filename"] = increment_filename()
-        self.stepper_done, self.tracker_done = False, False
-        self.stepper_app.command_queue.put(gcode + ["G93 N0"])
+            self.init_plot(to_profile(gcode))
+            self.settings["_aquisition mode"] = mode
+            self.settings["_filename"] = increment_filename()
+            self.stepper_done, self.tracker_done = False, False
+            self.stepper_app.command_queue.put(gcode + ["G93 N0"])
 
 
 if __name__ == "__main__":

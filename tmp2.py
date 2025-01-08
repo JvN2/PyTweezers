@@ -3,11 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from ImageProcessing import load_bin_file
-from MT_Tracker import bandpass_filter
+from MT_Tracker import bandpass_filter, imshow_multiple
 
 # Load the image
 # image = cv2.imread("path_to_your_image", cv2.IMREAD_GRAYSCALE)
 filename = r"d:\users\noort\data\20241212\data_006.hdf"
+filename = r"data\data_153.hdf"
 frames = load_bin_file(filename)
 image = frames[-10]
 

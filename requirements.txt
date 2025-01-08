@@ -1,3 +1,4 @@
+blosc2==3.0.0
 anyio==4.7.0
 asteval==1.0.5
 asttokens==3.0.0
@@ -40,9 +41,9 @@ seaborn==0.13.2
 serial==0.0.97
 six==1.16.0
 sniffio==1.3.1
-tables==3.10.1
+# tables==3.10.1
 tqdm==4.67.1
 typing_extensions==4.12.2
 tzdata==2024.2
 uncertainties==3.2.2
-vmbpy @ file:///C:/Users/jvann/VSC/PyTweezers/resources/vmbpy-1.0.5-py3-none-any.whl#sha256=94025e7f5f6d553b19ed244bef74e4bf9c7288608c8b40698658943f731c9e24
+vmbpy @ https://github.com/alliedvision/VmbPy/releases/download/1.0.5/vmbpy-1.0.5-py3-none-any.whl
