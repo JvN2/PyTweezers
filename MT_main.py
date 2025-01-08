@@ -26,6 +26,8 @@ SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
 SENTINEL = None
 
+DEFAULT_PLOT_TITLE = "No data available"
+
 
 class MainApp:
     def __init__(self, root):
@@ -115,6 +117,7 @@ class MainApp:
         self.settings["_trajectory"] = []
         self.settings["_filename"] = increment_filename()
         self.settings["_aquisition mode"] = "idle"
+        self.settings["_last_measured_file"] = None
 
         self.settings["_tracker"] = Tracker(r"data\data_153.hdf")
 
@@ -228,7 +231,7 @@ class MainApp:
             self.plt_axes[0].set_xlim(0, profile.index[-1])
             self.plt_axes[1].set_xlim(0, profile.index[-1])
 
-        self.plt_axes[0].set_title("Magnetic Tweezers")
+        self.plt_axes[0].set_title(DEFAULT_PLOT_TITLE)
         self.fig.tight_layout()
         self.canvas.draw()
 
@@ -270,8 +273,8 @@ class MainApp:
             self.ax1_line.set_data(t, z)
             self.plt_axes[1].relim()
             self.plt_axes[1].autoscale_view()
-            self.canvas.draw()
-        else:
+
+        elif self.settings["_last_measured_file"]:
             # Read data from hdf file
             data = hdf_data(self.settings["_filename"])
             if data.list_channels():
@@ -283,7 +286,16 @@ class MainApp:
                 self.ax1_line.set_data(t, z)
                 self.plt_axes[1].relim()
                 self.plt_axes[1].autoscale_view()
+                self.plt_axes[0].set_title(self.settings["_last_measured_file"])
                 self.canvas.draw()
+        else:
+            self.plt_axes[1].clear()
+            self.plt_axes[1].set_ylabel("Z (um)")
+            self.plt_axes[1].set_xlabel("Time (s)")
+            self.plt_axes[1].set_ylim(-15, 15)
+            self.plt_axes[1].set_xlim(0, 1)
+            self.plt_axes[0].set_title(DEFAULT_PLOT_TITLE)
+            self.canvas.draw()
 
         if self.stepper_done and self.tracker_done and self.stepper_data:
             # Save data to file
@@ -315,6 +327,9 @@ class MainApp:
         if len(self.settings["rois"]) == 0:
             messagebox.showinfo("Error", "No ROIs defined")
             return
+
+        self.settings["rois"] = [self.settings["rois"][self.settings["selected"]]]
+        self.settings["selected"] = 0
 
         range = 0.06
         current_focus = self.stepper_app.get_current_position()[2]
@@ -362,6 +377,7 @@ class MainApp:
                 self.stepper_app.get_current_position(),
             )
             self.init_plot(to_profile(gcode))
+            self.settings["_settings_changed"] = True
 
     def go_trajectory(self, gcode=None, mode="measure"):
         if len(self.settings["rois"]) == 0:
@@ -383,6 +399,7 @@ class MainApp:
             self.settings["_filename"] = increment_filename()
             self.stepper_done, self.tracker_done = False, False
             self.stepper_app.command_queue.put(gcode + ["G93 N0"])
+            self.settings["_last_measured_file"] = self.settings["_filename"]
 
 
 if __name__ == "__main__":

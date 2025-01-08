@@ -365,6 +365,8 @@ class FrameConsumer:
                         self.settings["rois"].append([x, y])
                         self.settings["selected"] = len(self.settings["rois"]) - 1
 
+                self.settings["_last_measured_file"] = None
+
         elif flags & cv2.EVENT_LBUTTONDOWN:
 
             dist = np.abs(
