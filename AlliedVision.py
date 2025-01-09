@@ -2,12 +2,10 @@ import copy
 import queue
 import threading
 from typing import Optional
-from time import sleep
 from ImageProcessing import FrameConsumer
 from icecream import ic
-
 import cv2
-import numpy
+
 
 from vmbpy import *
 
@@ -74,13 +72,13 @@ def set_nearest_value(cam: Camera, feat_name: str, feat_value: int):
 
 
 class FrameProducer(threading.Thread):
-    def __init__(self, cam: Camera, frame_queue: queue.Queue, settings={}):
+    def __init__(self, cam: Camera, frame_queue: queue.Queue, settings_new={}):
         threading.Thread.__init__(self)
         self.log = Log.get_instance()
         self.cam = cam
         self.frame_queue = frame_queue
         self.killswitch = threading.Event()
-        self.settings = settings
+        self.settings_new = settings_new
 
     def __call__(self, cam: Camera, stream: Stream, frame: Frame):
         if frame.get_status() == FrameStatus.Complete:
@@ -95,14 +93,14 @@ class FrameProducer(threading.Thread):
         self.killswitch.set()
 
     def setup_camera(self):
-        set_nearest_value(self.cam, "Height", self.settings.get("camera (pix)", 400)[0])
-        set_nearest_value(self.cam, "Width", self.settings.get("camera (pix)", 400)[1])
+        set_nearest_value(self.cam, "Height", self.settings_new.camera__pix[0])
+        set_nearest_value(self.cam, "Width", self.settings_new.camera__pix[1])
         self.cam.set_pixel_format(PixelFormat.Mono8)
 
         try:
             self.cam.TriggerMode.set("Off")
             self.cam.LineSelector.set("Line2")
-            self.cam.ExposureTime.set(50000)  # ms
+            self.cam.ExposureTime.set(self.settings_new.exposure_time__us)
 
             # for f in self.cam.get_all_features():
             #     try:
@@ -115,7 +113,7 @@ class FrameProducer(threading.Thread):
         except Exception as e:
             print(f"Error camera set up: {e}")
 
-    def run(self, settings=None):
+    def run(self):
         self.log.info("Thread 'FrameProducer({})' started.".format(self.cam.get_id()))
         try:
             with self.cam:
@@ -160,6 +158,22 @@ class CameraApplication:
                 producer.stop()
                 producer.join()
 
+    def list_camera_features(self, cam: Camera):
+        with cam:
+            for feature in cam.get_all_features():
+                try:
+                    feature_name = feature.get_name()
+                    feature_value = feature.get()
+                    is_writeable = feature.is_writeable()
+                    print(
+                        f"Feature name: {feature_name}, Value: {feature_value}, Writable: {is_writeable}"
+                    )
+                except VmbFeatureError as e:
+                    # print(f"Feature name: {feature.get_name()}, Error: {e}")
+                    pass
+                except AttributeError:
+                    pass
+
     def run(self):
         log = Log.get_instance()
         log.setLevel(LogLevel.Warning)
@@ -169,6 +183,7 @@ class CameraApplication:
 
         with vmb:
             for cam in vmb.get_all_cameras():
+                # self.list_camera_features(cam)
                 self.producers[cam.get_id()] = FrameProducer(
                     cam, self.frame_queue, self.settings
                 )
@@ -198,13 +213,13 @@ class CameraApplication:
         self.consumer.stop()
 
 
-if __name__ == "__main__":
-    print_preamble()
-    settings = {"roi_size (pix)": 50, "rois": [(50, 50), (100, 200), (198, 350)]}
-    settings["height (pix)"] = 400
-    settings["width (pix)"] = 400
-    settings["zoom"] = 2
-    app = CameraApplication(settings, tracker=settings)
-    threading.Thread(target=app.run).start()
-    sleep(2)
-    app.stop()
+# if __name__ == "__main__":
+#     print_preamble()
+#     settings = {"roi_size (pix)": 50, "rois": [(50, 50), (100, 200), (198, 350)]}
+#     settings["height (pix)"] = 400
+#     settings["width (pix)"] = 400
+#     settings["zoom"] = 2
+#     app = CameraApplication(settings, tracker=settings)
+#     threading.Thread(target=app.run).start()
+#     sleep(2)
+#     app.stop()

@@ -4,12 +4,17 @@ from tkinter import ttk  # Import ttk for combobox
 from tkinter import filedialog  # Import filedialog for file selection
 import numpy as np
 from pathlib import Path
+from icecream import ic
+
+# from MT_main import plot_adjust_y
 
 
 class SettingsEditor(tk.Toplevel):
-    def __init__(self, parent, settings, title=None):
+    def __init__(self, parent, settings, title=None, axis=None):
         super().__init__(parent)
         self.settings = settings
+        self.old_settings = settings.copy()
+        self.axis = axis
         self.entries = {}
         self.sliders = {}
 
@@ -108,41 +113,7 @@ class SettingsEditor(tk.Toplevel):
             row=row, column=0, padx=15, pady=5
         )
 
-    def open_file_dialog(self, event):
-        selected_extension = event.widget.get()
-        file_path = filedialog.askopenfilename(
-            filetypes=[(selected_extension, selected_extension)]
-        )
-        if file_path:
-            event.widget.set(file_path)
-
-    def to_slider_value(self, value, min_val, max_val, par_type):
-        if par_type == "2log":
-            return np.log2(value)
-        elif par_type == "10log":
-            return np.log10(value)
-        return value
-
-    def from_slider_value(self, slider_value, min_val, max_val, par_type):
-        if par_type == "2log":
-            return 2**slider_value
-        elif par_type == "10log":
-            return 10**slider_value
-        return slider_value
-
-    def update_slider_from_entry(self, key, entry, slider, par_type, min_val, max_val):
-        try:
-            value = float(entry.get())
-            slider.set(self.to_slider_value(value, min_val, max_val, par_type))
-        except ValueError:
-            pass
-
-    def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
-        value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
-        entry.delete(0, tk.END)
-        entry.insert(0, str(value))
-
-    def on_ok(self):
+    def update_settings(self):
         for key, entry in self.entries.items():
             if isinstance(entry, tk.StringVar):
                 self.settings[key] = entry.get()
@@ -167,10 +138,53 @@ class SettingsEditor(tk.Toplevel):
                 entry.delete(0, tk.END)
                 entry.insert(0, str(slider_value))
                 self.settings[key] = slider_value
+        if self.axis is not None:
+            self.master.settings = self.settings
+            ic(self.settings)
 
-        self.master.settings = (
-            self.settings
-        )  # Return the new settings to the main function
+    def open_file_dialog(self, event):
+        selected_extension = event.widget.get()
+        file_path = filedialog.askopenfilename(
+            filetypes=[(selected_extension, selected_extension)]
+        )
+        if file_path:
+            event.widget.set(file_path)
+
+    def to_slider_value(self, value, min_val, max_val, par_type):
+        if par_type == "2log":
+            return np.log2(value)
+        elif par_type == "10log":
+            return np.log10(value)
+        return value
+
+    def from_slider_value(self, slider_value, min_val, max_val, par_type):
+        def round_to_significant_digits(value, digits):
+            return float(f"{value:.{digits}g}")
+
+        if par_type == "2log":
+            return round_to_significant_digits(2**slider_value, 3)
+        elif par_type == "10log":
+            return round_to_significant_digits(10**slider_value, 3)
+        return slider_value
+
+    def update_slider_from_entry(self, key, entry, slider, par_type, min_val, max_val):
+        try:
+            value = float(entry.get())
+            slider.set(self.to_slider_value(value, min_val, max_val, par_type))
+        except ValueError:
+            pass
+        self.update_settings()
+
+    def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
+        value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
+        entry.delete(0, tk.END)
+        entry.insert(0, str(value))
+        self.update_settings()
+
+    def on_ok(self):
+        # Return the new settings to the main function
+        self.update_settings()
+        self.master.settings = self.settings
         self.destroy()
 
     def on_cancel(self):

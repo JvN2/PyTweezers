@@ -1066,11 +1066,10 @@ class hdf_data(object):
                 parameters = pd.concat([parameters, df], ignore_index=True)
         return parameters
 
-    def set_settings(self, settings):
-        rois = settings.get("rois", None)
-        self.settings = settings
+    def set_settings(self, settings_new):
+        rois = settings_new.rois
+        self.settings = settings_new.to_dict()
         if rois is not None:
-            self.settings.pop("rois")
             for label, roi in enumerate(rois):
                 self.label = str(label)
                 self.set_parameter("X0 (pix)", roi[0], type="local")
@@ -1128,15 +1127,15 @@ def import_tdms(filename, data=None):
     return data
 
 
-def create_hdf(settings, stepper_df, tracker_df):
+def create_hdf(settings_new, stepper_df, tracker_df):
 
-    data = hdf_data(Path(settings["_filename"]).with_suffix(".hdf"))
-    data.set_settings(settings)
+    data = hdf_data(Path(settings_new._filename).with_suffix(".hdf"))
+    data.set_settings(settings_new)
 
     if tracker_df is not None:
         time = tracker_df["Frame"].values
         time -= time[0]
-        time /= settings["frame rate (Hz)"]
+        time *= settings_new.exposure_time__us * 1e-6
 
         stepper_df = stepper_df.loc[:, stepper_df.nunique() > 1]
 

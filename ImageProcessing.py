@@ -4,20 +4,12 @@ import numpy as np
 import pandas as pd
 import traceback
 
-# from vmbpy import *
 from icecream import ic
 from typing import Tuple, Optional
 from TraceIO import hdf_data
-import itertools
 from pathlib import Path
 from matplotlib import pyplot as plt
-from time import sleep
-from scipy.ndimage import maximum_filter
-from scipy.optimize import minimize
 from time import time
-
-# from MT_Tracker import tracker
-
 
 FRAME_QUEUE_SIZE = 10
 SENTINEL = None
@@ -111,38 +103,29 @@ def extract_fov(cv_image: np.ndarray, fov: np.ndarray) -> np.ndarray:
     ]
 
 
-def plot_rois(
-    cv_frame: np.ndarray, settings=None, fov=False, frame_nr=None, proccessing=False
-) -> np.ndarray:
-    cv_frame = cv2.cvtColor(cv_frame, cv2.COLOR_GRAY2RGB)
-    if fov:
-        roi_size = int(
-            settings["roi_size (pix)"]
-            * settings["window (pix)"]
-            / settings["fov_size (pix)"]
-        )
-    else:
-        roi_size = settings["roi_size (pix)"]
+def plot_rois(fov, settings=None, frame_nr=None, proccessing=False):
 
-    for i, center in enumerate(settings.get("rois", [])):
-        if fov:
-            center = (np.array(center) - settings["fov_center (pix)"]) / settings[
-                "fov_size (pix)"
-            ]
-            center += 0.5
-            center = center * settings["window (pix)"]
-            center = center.astype(int)
+    roi_size = int(
+        settings.roi_size__pix * settings.window__pix / settings.fov_size__pix
+    )
 
-        color = (0, 255, 255) if i == settings.get("selected", 0) else (255, 0, 0)
+    for i, center in enumerate(settings.rois):
+
+        center = (np.array(center) - settings.fov_center__pix) / settings.fov_size__pix
+        center += 0.5
+        center = center * settings.window__pix
+        center = center.astype(int)
+
+        color = (0, 255, 255) if i == settings.selected else (255, 0, 0)
         cv2.rectangle(
-            cv_frame,
+            fov,
             np.asarray(center) - roi_size // 2,
             np.asarray(center) - roi_size // 2 + roi_size,
             color,
             1,
         )
         cv2.putText(
-            cv_frame,
+            fov,
             f"{i}",
             [
                 center[0] - roi_size // 2,
@@ -153,17 +136,18 @@ def plot_rois(
             color,
             1,
         )
+
     if frame_nr:
         if proccessing:
             color = (0, 255, 255)
         else:
             color = (255, 0, 0)
         cv2.putText(
-            cv_frame,
+            fov,
             f"{frame_nr}",
             [
                 10,
-                cv_frame.shape[1] - 10,
+                fov.shape[1] - 10,
             ],
             cv2.FONT_HERSHEY_COMPLEX_SMALL,
             1,
@@ -171,7 +155,7 @@ def plot_rois(
             1,
         )
 
-    return cv_frame
+    return fov
 
 
 def extract_rois(frame: np.ndarray, centers, size) -> np.ndarray:
@@ -190,7 +174,6 @@ class FrameConsumer:
         settings: dict,
         root=None,
         data_queue=None,
-        tracker=None,
     ):
         self.frame_queue = frame_queue
         self.data_queue = data_queue
@@ -228,7 +211,7 @@ class FrameConsumer:
                         frames.pop(cam_id, None)
                     frames_left -= 1
 
-                if frames:  # Extract the FOV from the camera image and display it
+                if frames:
                     cv_images = np.concatenate(
                         [
                             frames[cam_id].as_opencv_image()
@@ -236,32 +219,31 @@ class FrameConsumer:
                         ],
                         axis=1,
                     )
+                    if frame_num % 1 == 0:
+                        # Extract the FOV from the camera image and display it
+                        try:
+                            center = self.settings.rois[self.settings.selected]
+                        except IndexError:
+                            center = self.settings.fov_center__pix
 
-                    try:
-                        center = self.settings["rois"][self.settings["selected"]]
-                    except IndexError:
-                        center = self.settings["fov_center (pix)"]
+                        (
+                            fov,
+                            self.settings.fov_center__pix,
+                            self.settings.fov_size__pix,
+                        ) = get_subarray(
+                            cv_images,
+                            center,
+                            self.settings.fov_size__pix,
+                        )
 
-                    (
-                        fov,
-                        self.settings["fov_center (pix)"],
-                        self.settings["fov_size (pix)"],
-                    ) = get_subarray(
-                        cv_images,
-                        center,
-                        self.settings["fov_size (pix)"],
-                    )
+                        fov = cv2.cvtColor(self._magnify(fov), cv2.COLOR_GRAY2RGB)
+                        fov = plot_rois(
+                            fov,
+                            self.settings,
+                            frame_nr=frame_num,
+                            proccessing=acquisition_in_progress,
+                        )
 
-                    fov = self._magnify(fov)
-                    fov = plot_rois(
-                        fov,
-                        self.settings,
-                        fov=True,
-                        frame_nr=frame_num,
-                        proccessing=acquisition_in_progress,
-                    )
-
-                    if frame_num % 3 == 0:
                         cv2.imshow(IMAGE_CAPTION, fov)
                         cv2.namedWindow(IMAGE_CAPTION)
                         cv2.setMouseCallback(
@@ -279,13 +261,13 @@ class FrameConsumer:
                         # get coordinates for each roi
                         rois = extract_rois(
                             cv_images,
-                            self.settings["rois"],
-                            self.settings["roi_size (pix)"],
+                            self.settings.rois,
+                            self.settings.roi_size__pix,
                         )
                         coords = np.concatenate(
                             (
                                 [frame_num],
-                                self.settings["_tracker"].get_coords(rois).flatten(),
+                                self.settings._tracker.get_coords(rois).flatten(),
                             )
                         )
                         self.data_queue.put(coords)
@@ -294,14 +276,14 @@ class FrameConsumer:
                         # Extract selected roi and save it
                         (roi, _, _) = get_subarray(
                             cv_images,
-                            self.settings["rois"][self.settings["selected"]],
-                            self.settings["roi_size (pix)"],
+                            self.settings.rois[self.settings.selected],
+                            self.settings.roi_size__pix,
                         )
                         self.selected_roi_frames.append(roi)
 
                     if len(self.selected_roi_frames) and not acquisition_in_progress:
-                        if self.settings.get("_aquisition mode") == "calibrate":
-                            self.save_frames_to_binary_file(self.settings["_filename"])
+                        if self.settings._aquisition_mode == "calibrate":
+                            self.save_frames_to_binary_file(self.settings._filename)
                         self.selected_roi_frames.clear()
                         self.data_queue.put(SENTINEL)
 
@@ -321,8 +303,8 @@ class FrameConsumer:
         cv_frame = cv2.resize(
             cv_frame,
             (
-                self.settings["window (pix)"],
-                self.settings["window (pix)"],
+                self.settings.window__pix,
+                self.settings.window__pix,
             ),
             interpolation=cv2.INTER_NEAREST,
         )
@@ -331,64 +313,62 @@ class FrameConsumer:
     def _mouse_callback(self, event, x, y, flags, param):
         acquisition_in_progress = param
         x, y = (
-            (np.array([x, y]) / self.settings["window (pix)"] - 0.5)
-            * self.settings["fov_size (pix)"]
-            + self.settings["fov_center (pix)"]
+            (np.array([x, y]) / self.settings.window__pix - 0.5)
+            * self.settings.fov_size__pix
+            + self.settings.fov_center__pix
         ).astype(int)
 
-        roi_size = self.settings["roi_size (pix)"]
+        roi_size = self.settings.roi_size__pix
         roi_size = int(
-            self.settings["roi_size (pix)"]
-            * self.settings["window (pix)"]
-            / self.settings["fov_size (pix)"]
+            self.settings.roi_size__pix
+            * self.settings.window__pix
+            / self.settings.fov_size__pix
         )
 
         if flags & cv2.EVENT_FLAG_CTRLKEY:
             # add or remove roi
             if event == cv2.EVENT_LBUTTONDOWN and not acquisition_in_progress:
-                if len(self.settings["rois"]) == 0:
-                    self.settings["rois"].append([x, y])
+                if len(self.settings.rois) == 0:
+                    self.settings.rois.append([x, y])
                     return
                 dist = np.abs(
-                    np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
+                    np.asarray([c - np.asarray([x, y]) for c in self.settings.rois])
                 )
                 in_roi = np.all((dist < roi_size // 2), axis=1)
                 index = np.where(in_roi)[0]
                 if len(index) > 0:
-                    self.settings["rois"].pop(index[0])
-                    self.settings["selected"] = max(0, self.settings["selected"] - 1)
+                    self.settings.rois.pop(index[0])
+                    self.settings.selected = max(0, self.settings.selected - 1)
                 else:
                     margin = roi_size // 2
-                    if (margin < x < self.settings["camera (pix)"][0] - margin) & (
-                        margin < y < self.settings["camera (pix)"][1] - margin
+                    if (margin < x < self.settings.camera__pix[0] - margin) & (
+                        margin < y < self.settings.camera__pix[1] - margin
                     ):
-                        self.settings["rois"].append([x, y])
-                        self.settings["selected"] = len(self.settings["rois"]) - 1
+                        self.settings.rois.append([x, y])
+                        self.settings.selected = len(self.settings.rois) - 1
 
-                self.settings["_last_measured_file"] = None
+                self.settings._last_measured_file = None
 
         elif flags & cv2.EVENT_LBUTTONDOWN:
 
             dist = np.abs(
-                np.asarray([c - np.asarray([x, y]) for c in self.settings["rois"]])
+                np.asarray([c - np.asarray([x, y]) for c in self.settings.rois])
             )
             try:
                 in_roi = np.all((dist < roi_size // 2), axis=1)
                 index = np.where(in_roi)[0]
                 if len(index) > 0:
-                    self.settings["selected"] = index[0]
+                    self.settings.selected = index[0]
             except IndexError:
                 pass  # no rois defined
 
         if event == cv2.EVENT_MOUSEWHEEL:
             zoom = 1.25
             if flags < 0:
-                self.settings["fov_size (pix)"] = int(
-                    self.settings["fov_size (pix)"] * zoom
-                )
+                self.settings.fov_size__pix = int(self.settings.fov_size__pix * zoom)
             else:
-                self.settings["fov_size (pix)"] = max(
-                    int(self.settings["fov_size (pix)"] / zoom), 16
+                self.settings.fov_size__pix = max(
+                    int(self.settings.fov_size__pix / zoom), 16
                 )
 
         self.main_root.focus_force()
