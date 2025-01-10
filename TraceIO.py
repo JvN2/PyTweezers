@@ -496,7 +496,7 @@ def format_plot(
             try:
                 subprocess.call(
                     [
-                        "C:\Program Files\Inkscape\inkscape.exe",
+                        r"C:\Program Files\Inkscape\inkscape.exe",
                         "--file",
                         save,
                         "--export-emf",
@@ -1127,34 +1127,31 @@ def import_tdms(filename, data=None):
     return data
 
 
-def create_hdf(settings_new, stepper_df, tracker_df):
-
-    data = hdf_data(Path(settings_new._filename).with_suffix(".hdf"))
-    data.set_settings(settings_new)
+def create_hdf(settings, stepper_df, tracker_df):
+    data = hdf_data(Path(settings._filename).with_suffix(".hdf"))
+    data.set_settings(settings)
+    data.save(settings=True)
 
     if tracker_df is not None:
         time = tracker_df["Frame"].values
         time -= time[0]
-        time *= settings_new.exposure_time__us * 1e-6
+        time *= settings.exposure_time__us * 1e-6
+        data.traces["Time (s)"] = time
+
+        data.shared_tracenames = ["Time (s)"]
 
         stepper_df = stepper_df.loc[:, stepper_df.nunique() > 1]
-
-        for col in stepper_df.columns:
-            tracker_df[col] = np.interp(
+        for col in stepper_df.columns[1:]:
+            data.traces[col] = np.interp(
                 time, stepper_df["Time (s)"], stepper_df[col].values
             )
+            data.shared_tracenames.append(col)
 
-        data.shared_tracenames = list(stepper_df.columns)
-
-        data.traces = tracker_df[stepper_df.columns].copy()
-        data.traces["Time (s)"] = time  # Ensure the lengths match
         data.save(settings=True)
 
-        tracker_df.drop(stepper_df.columns, axis=1, inplace=True)
         tracker_df.drop("Frame", axis=1, inplace=True)
-
-        labels = set([trace.split(" ")[0][1:] for trace in tracker_df.columns[1:]])
-        channels = set([re.sub(r"\d+", "", trace) for trace in tracker_df.columns[1:]])
+        labels = set([trace.split(" ")[0][1:] for trace in tracker_df.columns])
+        channels = set([re.sub(r"\d+", "", trace) for trace in tracker_df.columns])
 
         for label in sorted(labels):
             data.label = label
@@ -1162,7 +1159,7 @@ def create_hdf(settings_new, stepper_df, tracker_df):
                 data.traces[channel] = tracker_df[
                     channel[0] + label + channel[1:]
                 ].values
-            data.save(settings=False)
+            data.save()
 
     return data.filename
 

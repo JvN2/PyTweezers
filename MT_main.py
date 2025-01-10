@@ -21,7 +21,7 @@ SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
 SENTINEL = None
 DEFAULT_PLOT_TITLE = " "
-CHANNELS = ["X (um)", "Y (um)", "Z (um)", "A (a.u.)"]
+CHANNELS = ["X (pix)", "Y (pix)", "Z (um)", "A (a.u.)"]
 
 
 class Settings:
@@ -45,6 +45,7 @@ class Settings:
         self._plot_range = 10
         self._plot_offset = 0
         self._plot_channel = "Z (um)"
+        self._plot_subtract_mean = "True"
 
     def to_dict(self):
         old_dict = self.__dict__.copy()
@@ -58,9 +59,9 @@ class Settings:
         return dict
 
 
-def plot_adjust_y(plot_range, plot_offset, axis):
+def plot_adjust_y(plot_range, plot_offset, axis, mean=0):
     if plot_range > 0:
-        yrange = plot_offset + np.asarray([-plot_range, plot_range]) / 2
+        yrange = plot_offset + np.asarray([-plot_range, plot_range]) / 2 + mean
         axis.set_ylim(yrange)
 
 
@@ -92,6 +93,10 @@ class MainApp:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Exit", command=self.exit_application)
         menubar.add_cascade(label="File", menu=file_menu)
+
+        bead_menu = tk.Menu(menubar, tearoff=0)
+        bead_menu.add_command(label="Remove all", command=self.remove_beads)
+        menubar.add_cascade(label="Beads", menu=bead_menu)
 
         measure_menu = tk.Menu(menubar, tearoff=0)
         measure_menu.add_command(label="Go", command=self.go_trajectory)
@@ -218,29 +223,30 @@ class MainApp:
         # print(self.stepper_app.get_current_position())
 
     def adjust_plot_range(self):
-
         plot_settings = {
             "channel": [self.settings._plot_channel] + CHANNELS,
-            "range": [self.settings._plot_range, -1, 2, 0.2, "10log"],
+            "range": [self.settings._plot_range, -1, 2, 0.02, "10log"],
             "offset": [self.settings._plot_offset, -100, 100, 0.1, "linear"],
+            "subtract mean": [self.settings._plot_subtract_mean, "False", "True"],
         }
 
         plot_editor = SettingsEditor(
-            self.root, plot_settings, "Modify plot ...", axis=self.plt_axes[1]
+            self.root,
+            plot_settings,
+            "Modify plot ...",
+            self.settings,
         )
         self.root.wait_window(plot_editor)
 
-        if plot_editor.settings:
-            self.settings._plot_range = plot_editor.settings["range"]
-            self.settings._plot_offset = plot_editor.settings["offset"]
-            self.settings._plot_channel = plot_editor.settings["channel"]
-
-        self.plt_axes[1].set_ylabel(self.settings._plot_channel)
-        plot_adjust_y(
-            self.settings._plot_range, self.settings._plot_offset, self.plt_axes[1]
+    def plot_adjust_y(self, axis):
+        # Ensure that yrange is a tuple or list with exactly two elements
+        yrange = (
+            self.settings._plot_offset
+            + np.asarray([-self.settings._plot_range, self.settings._plot_range]) / 2
         )
-        self.plt_axes[1].set_ylabel(self.settings._plot_channel)
-        self.canvas.draw()
+        if len(yrange) != 2:
+            raise ValueError("yrange must have exactly two elements")
+        axis.set_ylim(yrange)
 
     def change_lut(self):
         if self.tracker_queue.empty():
@@ -274,13 +280,14 @@ class MainApp:
             )
             self.plt_axes[0].set_ylabel(profile.columns[0])
 
-        (self.ax0_line,) = self.plt_axes[0].plot([], [], "o", color="blue", alpha=0.3)
-        (self.ax1_line,) = self.plt_axes[1].plot([], [], "o", color="red", alpha=0.3)
+        (self.ax0_line,) = self.plt_axes[0].plot(
+            [], [], "o", color="blue", alpha=0.3, markersize=5
+        )
+        (self.ax1_line,) = self.plt_axes[1].plot(
+            [], [], "o", color="red", alpha=0.3, markersize=5
+        )
 
         self.plt_axes[0].set_xlabel("Time (s)")
-        plot_adjust_y(
-            self.settings._plot_range, self.settings._plot_offset, self.plt_axes[1]
-        )
 
         if profile is not None:
             profile.plot(
@@ -322,6 +329,7 @@ class MainApp:
                 self.tracker_data.append(data)
                 data = None
 
+        mean = 0
         if len(self.tracker_data) > 1:
             # get colum of z (um) of selected roi from tracker data
             column_index = CHANNELS.index(self.settings._plot_channel)
@@ -329,27 +337,39 @@ class MainApp:
             t = [data[0] for data in self.tracker_data]
             t = (np.asarray(t) - t[0]) * self.settings.exposure_time__us * 1e-6
             plot_data = [data[index] for data in self.tracker_data]
+            mean = np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
             self.ax1_line.set_data(t, plot_data)
             self.plt_axes[1].relim()
             self.plt_axes[1].autoscale_view()
 
         elif self.settings._last_measured_file:
             # Read data from hdf file
-            ic(self.settings._plot_channel, self.settings._plot_range)
+            # ic(self.settings._plot_channel, self.settings._plot_range)
             data = hdf_data(self.settings._filename)
             if data.list_channels():
                 data.read(self.settings._filename, label=str(self.settings.selected))
                 t = data.traces["Time (s)"]
                 plot_data = data.traces[self.settings._plot_channel]
+                mean = (
+                    np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
+                )
                 self.ax1_line.set_data(t, plot_data)
                 self.plt_axes[1].relim()
                 self.plt_axes[1].autoscale_view()
                 self.plt_axes[0].set_title(self.settings._last_measured_file)
-                self.canvas.draw()
         else:
             self.plt_axes[1].clear()
             self.plt_axes[0].set_title(DEFAULT_PLOT_TITLE)
-            self.canvas.draw()
+
+        self.plt_axes[1].set_ylabel(self.settings._plot_channel)
+
+        plot_adjust_y(
+            self.settings._plot_range,
+            self.settings._plot_offset,
+            self.plt_axes[1],
+            mean,
+        )
+        self.canvas.draw()
 
         if self.stepper_done and self.tracker_done and self.stepper_data:
             # Save data to file
@@ -362,6 +382,7 @@ class MainApp:
             for i, _ in enumerate(self.settings.rois):
                 for c in CHANNELS:
                     cols.append(f"{c[0]}{i}{c[1:]}")
+
             tracker_df = pd.DataFrame(self.tracker_data, columns=cols)
 
             print(f"Data saved in {create_hdf(self.settings, stepper_df, tracker_df)}")
@@ -406,11 +427,11 @@ class MainApp:
                 "Rotation (turns)",
             ],
             "relative": ["True", "False", "True"],
-            "start": [0, -10, 10, 0.1, "linear"],
-            "target": [0.02, -100, 100, 0.001, "linear"],
+            "start": [0, -100, 100, 0.1, "linear"],
+            "target": [0.01, -100, 100, 0.001, "linear"],
             "wait (s)": [1, 0, 10, 0.1, "linear"],
-            "move (s)": [3, 0, 120, 0.1, "linear"],
-            "dwell (s)": [0, -100, 100, 0.1, "linear"],
+            "move (s)": [2, 0, 120, 0.1, "linear"],
+            "dwell (s)": [-4, -100, 100, 0.1, "linear"],
             "repeat": [1, 1, 4, 1, "linear"],
         }
         if self.settings._trajectory:
@@ -422,14 +443,18 @@ class MainApp:
         )
         self.root.wait_window(settings_editor)
 
-        if settings_editor.settings:
-            self.settings._trajectory = settings_editor.settings
+        if settings_editor.parameters:
+            self.settings._trajectory = settings_editor.parameters
             gcode = to_gcode(
                 self.settings._trajectory,
                 self.stepper_app.get_current_position(),
             )
             self.init_plot(to_profile(gcode))
             self.settings._settings_changed = True
+
+    def remove_beads(self):
+        self.settings.rois = []
+        self.settings.selected = 0
 
     def go_trajectory(self, gcode=None, mode="measure"):
         if len(self.settings.rois) == 0:

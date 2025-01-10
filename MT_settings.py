@@ -6,15 +6,15 @@ import numpy as np
 from pathlib import Path
 from icecream import ic
 
-# from MT_main import plot_adjust_y
-
 
 class SettingsEditor(tk.Toplevel):
-    def __init__(self, parent, settings, title=None, axis=None):
+    def __init__(self, parent, parameters, title=None, settings=None):
         super().__init__(parent)
+        self.parameters = parameters
+        self.start_paramters = parameters.copy()
+        if settings is not None:
+            self.old_settings = settings.to_dict()
         self.settings = settings
-        self.old_settings = settings.copy()
-        self.axis = axis
         self.entries = {}
         self.sliders = {}
 
@@ -36,7 +36,7 @@ class SettingsEditor(tk.Toplevel):
         row = 0
         button_width = 10  # Set a fixed width for the buttons
         entry_width = 20  # Set a fixed width for the entries and comboboxes
-        for key, values in self.settings.items():
+        for key, values in self.parameters.items():
             if isinstance(values[0], (int, float)):
                 tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
                 entry = tk.Entry(self, width=entry_width)
@@ -68,7 +68,7 @@ class SettingsEditor(tk.Toplevel):
 
                 # Couple the entry and slider
                 entry.bind(
-                    "<KeyRelease>",
+                    "<FocusOut>",
                     lambda event, k=key, e=entry, s=slider, par_type=par_type, min_val=min_val, max_val=max_val: self.update_slider_from_entry(
                         k, e, s, par_type, min_val, max_val
                     ),
@@ -113,22 +113,22 @@ class SettingsEditor(tk.Toplevel):
             row=row, column=0, padx=15, pady=5
         )
 
-    def update_settings(self):
+    def update_parameters(self):
         for key, entry in self.entries.items():
             if isinstance(entry, tk.StringVar):
-                self.settings[key] = entry.get()
+                self.parameters[key] = entry.get()
             else:
                 value = entry.get()
                 if value.isdigit():
-                    self.settings[key] = int(value)
+                    self.parameters[key] = int(value)
                 else:
                     try:
-                        self.settings[key] = float(value)
+                        self.parameters[key] = float(value)
                     except ValueError:
                         messagebox.showerror(
                             "Invalid input", f"Invalid value for {key}: {value}"
                         )
-                        return
+                        self.parameters[key] = self.start_paramters[key]
 
                 # Update the entry with the slider value
                 slider, par_type, min_val, max_val = self.sliders[key]
@@ -137,10 +137,16 @@ class SettingsEditor(tk.Toplevel):
                 )
                 entry.delete(0, tk.END)
                 entry.insert(0, str(slider_value))
-                self.settings[key] = slider_value
-        if self.axis is not None:
-            self.master.settings = self.settings
-            ic(self.settings)
+                self.parameters[key] = slider_value
+
+            if self.settings and "channel" in self.parameters.keys():
+                self.settings._plot_channel = self.parameters["channel"]
+            if self.settings and "range" in self.parameters.keys():
+                self.settings._plot_range = self.parameters["range"]
+            if self.settings and "offset" in self.parameters.keys():
+                self.settings._plot_offset = self.parameters["offset"]
+            if self.settings and "subtract mean" in self.parameters.keys():
+                self.settings._plot_subtract_mean = self.parameters["subtract mean"]
 
     def open_file_dialog(self, event):
         selected_extension = event.widget.get()
@@ -155,7 +161,7 @@ class SettingsEditor(tk.Toplevel):
             return np.log2(value)
         elif par_type == "10log":
             return np.log10(value)
-        return value
+        return np.clip(value, min_val, max_val)
 
     def from_slider_value(self, slider_value, min_val, max_val, par_type):
         def round_to_significant_digits(value, digits):
@@ -173,77 +179,35 @@ class SettingsEditor(tk.Toplevel):
             slider.set(self.to_slider_value(value, min_val, max_val, par_type))
         except ValueError:
             pass
+        self.update_parameters()
         self.update_settings()
 
     def update_entry_from_slider(self, key, entry, slider, par_type, min_val, max_val):
         value = self.from_slider_value(slider.get(), min_val, max_val, par_type)
         entry.delete(0, tk.END)
         entry.insert(0, str(value))
+        self.update_parameters()
         self.update_settings()
+
+    def update_settings(self):
+        if self.settings:
+            for key, value in self.parameters.items():
+                if hasattr(self.settings, key):
+                    setattr(self.settings, key, value)
 
     def on_ok(self):
         # Return the new settings to the main function
+        self.update_parameters()
         self.update_settings()
-        self.master.settings = self.settings
         self.destroy()
 
     def on_cancel(self):
         self.destroy()
 
 
-class MainApp:
-    def __init__(self, root):
-        self.root = root
-        self.settings = {"example_setting": "default_value"}
-        self.create_widgets()
-
-    def create_widgets(self):
-        button = tk.Button(
-            self.root, text="Change Settings", command=self.change_settings
-        )
-        button.pack()
-
-    def change_settings(self):
-        settings = {"example_setting": self.settings["example_setting"]}
-
-        title = "Adjust settings ..."
-        settings_editor = SettingsEditor(self.root, settings, title)
-        self.root.wait_window(
-            settings_editor
-        )  # Wait until the SettingsEditor window is closed
-
-        if settings_editor.settings:
-            for key, value in settings_editor.settings.items():
-                self.settings[key] = value
-
-
 # Example usage
 if __name__ == "__main__":
-
     root = tk.Tk()
-    root.settings = {}  # Initialize root.settings
-    root.title("Settings Editor")
-    settings = {
-        "roi_size (pix)": (64, 2, 8, 1, "2log"),
-        "frames": (100, 0, 4, 1, "10log"),
-        "window (pix)": (1024, 7, 10, 1, "2log"),
-        "fov_size (pix)": (50, 0, 100, 10, "Linear"),
-        "some_float": (50, 0, 3, 1, "10log"),
-        "some string": ("hello", "10log", "else"),
-        "File": (Path("c:/tmp/image.bin"), "*.bin", "*.hdf"),
-    }
-
-    # settings = {
-    #     "axis": ("X (mm)", "Y (mm)", "Z (mm)"),
-    #     "target": (1, 0, 10, 0.1, "linear"),
-    # }
-    print(settings)
-
-    title = "Adjust settings ..."
-    editor = SettingsEditor(root, settings, title)
-    root.wait_window(editor)  # Wait for the settings editor to close
-    for key, value in root.settings.items():
-        print(f"{key}: {value}")  # Print the updated settings
-    # root.mainloop()
-    # for key, value in root.settings.items():
-    #     print(f"{key}: {value}")  # Print the updated settings
+    settings = Settings()  # Assuming you have a Settings class
+    app = SettingsEditor(master=root, parameters=settings.to_dict(), settings=settings)
+    app.mainloop()
