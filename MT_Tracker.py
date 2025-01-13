@@ -390,49 +390,62 @@ def find_modulation(y, x, show=False):
 
 
 class Tracker:
-    def __init__(self, filename=None):
+    def __init__(self, pixel_size__um, roi_size__pix, filename=None):
 
         if filename is None:
             # Open file dialog to select a file
-            root = tk.Tk()
-            root.withdraw()  # Hide the root window
-            filename = tk.filedialog.askopenfilename(
-                title="Select a file",
-                filetypes=(("bin files", "*.bin"), ("All files", "*.*")),
+            # root = tk.Tk()
+            # root.withdraw()  # Hide the root window
+            # filename = tk.filedialog.askopenfilename(
+            #     title="Select a file",
+            #     filetypes=(("bin files", "*.bin"), ("All files", "*.*")),
+            # )
+            # if not filename:
+            #     raise ValueError("No file selected")
+
+            # only do xy tracking
+            dummy = np.zeros((roi_size__pix, roi_size__pix))
+            self.mask = bandpass_filter(
+                dummy, high=5, low=roi_size__pix / 2, width=2.5, centered=True
             )
-            if not filename:
-                raise ValueError("No file selected")
+            self.z_lut = None
+            self.pixel_size__um = pixel_size__um
 
-        filename = Path(filename).with_suffix(".hdf")
-        self.filename = filename
+        else:
 
-        # correct focus for Focus recording errors
-        focus = hdf_data(filename).traces["Focus (mm)"].values
-        t = hdf_data(filename).traces["Time (s)"].values
-        fit = np.polyval(np.polyfit(t, focus, 1), t)
+            filename = Path(filename).with_suffix(".hdf")
+            self.filename = filename
+            self.pixel_size__um = pixel_size__um
 
-        # correct for refractive index
-        self.z_lut = fit * 1000 / 1.3333
+            # correct focus for Focus recording errors
+            focus = hdf_data(filename).traces["Focus (mm)"].values
+            t = hdf_data(filename).traces["Time (s)"].values
+            fit = np.polyval(np.polyfit(t, focus, 1), t)
 
-        images = load_bin_file(filename)
-        self.mask = bandpass_filter(images[0], high=8, low=25, width=2.5, centered=True)
+            # correct for refractive index
+            self.z_lut = fit * 1000 / 1.3333
 
-        self.lut = self._create_lut(images, average=None)
-        self.z_lut -= find_focus(images, self.z_lut, show=False)
+            images = load_bin_file(filename)
+            self.mask = bandpass_filter(
+                images[0], high=8, low=25, width=2.5, centered=True
+            )
 
-        # mask = bandpass_filter(
-        #     images[0], high=15, low=25, width=2, centered=False, cut_dc=True
-        # )
-        # centers = [find_bead_center(image, self.mask, show=False) for image in images]
+            self.lut = self._create_lut(images, average=None)
+            self.z_lut -= find_focus(images, self.z_lut, show=False)
 
-        i_focus = np.argmin(np.abs(self.z_lut))
-        find_bead_center(images[i_focus], self.mask, show=False)
+            # mask = bandpass_filter(
+            #     images[0], high=15, low=25, width=2, centered=False, cut_dc=True
+            # )
+            # centers = [find_bead_center(image, self.mask, show=False) for image in images]
 
-        # z_correction = find_modulation(z_new - z_old, z_new, show=True)
+            # i_focus = np.argmin(np.abs(self.z_lut))
+            # find_bead_center(images[i_focus], self.mask, show=False)
 
-        resample = True
-        if resample:
-            self._resample_lut(dz=0.5, show=False)
+            # z_correction = find_modulation(z_new - z_old, z_new, show=True)
+
+            resample = True
+            if resample:
+                self._resample_lut(dz=0.5, show=False)
 
     def _create_lut(self, images, average=None):
         lut = [self.mask * np.fft.fftshift(np.abs(np.fft.fft2(im))) for im in images]
@@ -580,12 +593,21 @@ class Tracker:
         return new_z, 1 / min_value
 
     def get_coords(self, images, show=False):
-        coords = np.asarray(
-            [
-                np.append(find_bead_center(image, self.mask), self._get_z(image))
-                for image in images
-            ]
-        )
+        if self.z_lut is None:
+            coords = np.asarray(
+                [
+                    np.append(find_bead_center(image, self.mask), [np.nan, np.nan])
+                    for image in images
+                ]
+            )
+        else:
+
+            coords = np.asarray(
+                [
+                    np.append(find_bead_center(image, self.mask), self._get_z(image))
+                    for image in images
+                ]
+            )
 
         if show:
             colors = ["k", "r", "b", "g"]
@@ -602,7 +624,7 @@ class Tracker:
                 plt.xlabel("frame")
                 plt.legend()
             plt.show()
-        return coords
+        return coords * self.pixel_size__um
 
 
 if __name__ == "__main__":

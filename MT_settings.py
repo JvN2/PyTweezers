@@ -65,8 +65,6 @@ class SettingsEditor(tk.Toplevel):
                 slider.set(slider_value)
                 slider.grid(row=row, column=2, padx=5, pady=5)
                 self.sliders[key] = (slider, par_type, min_val, max_val)
-
-                # Couple the entry and slider
                 entry.bind(
                     "<FocusOut>",
                     lambda event, k=key, e=entry, s=slider, par_type=par_type, min_val=min_val, max_val=max_val: self.update_slider_from_entry(
@@ -79,6 +77,7 @@ class SettingsEditor(tk.Toplevel):
                         k, e, s, par_type, min_val, max_val
                     ),
                 )
+
                 row += 1
             elif isinstance(values[0], str):
                 tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
@@ -92,6 +91,7 @@ class SettingsEditor(tk.Toplevel):
                 )
                 self.entries[key] = var
                 row += 1
+                combobox.bind("<ButtonRelease>", self.update_settings())
             elif isinstance(values[0], Path):
                 tk.Label(self, text=key).grid(row=row, column=0, padx=5, pady=5)
                 var = tk.StringVar(self)

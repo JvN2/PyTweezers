@@ -107,6 +107,26 @@ def timeit(method):
     return timed
 
 
+def timed_ic(x, time_delay=1.0):
+    if not hasattr(timed_ic, "last_call_time"):
+        timed_ic.last_call_time = 0  # Initialize the last call time
+
+    current_time = time.time()
+    if current_time - timed_ic.last_call_time >= time_delay:
+        # Get the variable name of x
+        frame = inspect.currentframe().f_back
+        variable_name = None
+        for name, value in frame.f_locals.items():
+            if value is x:
+                variable_name = name
+                break
+
+        readable_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time))
+
+        print(f"{readable_time} - {variable_name}: {x}")
+        timed_ic.last_call_time = current_time
+
+
 def debug(*args, msg=None):
     """Prints the name and value of variables in a Python function, with the calling function name.
 

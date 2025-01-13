@@ -6,7 +6,7 @@ import traceback
 
 from icecream import ic
 from typing import Tuple, Optional
-from TraceIO import hdf_data
+from TraceIO import hdf_data, timed_ic
 from pathlib import Path
 from matplotlib import pyplot as plt
 from time import time
@@ -270,6 +270,7 @@ class FrameConsumer:
                                 self.settings._tracker.get_coords(rois).flatten(),
                             )
                         )
+
                         self.data_queue.put(coords)
                         self.latest_processed_frame = frame_num
 

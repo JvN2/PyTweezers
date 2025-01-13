@@ -5,7 +5,7 @@ import numpy as np
 from icecream import ic
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from TraceIO import increment_filename, create_hdf, hdf_data
+from TraceIO import increment_filename, create_hdf, hdf_data, timed_ic
 from MT_steppers import StepperApplication, to_gcode, to_profile, to_axis
 from MT_settings import SettingsEditor
 from MT_Tracker import Tracker
@@ -13,6 +13,7 @@ from time import sleep
 from collections import deque
 import queue
 import pandas as pd
+from pathlib import Path
 
 from AlliedVision import CameraApplication
 
@@ -21,26 +22,29 @@ SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
 SENTINEL = None
 DEFAULT_PLOT_TITLE = " "
-CHANNELS = ["X (pix)", "Y (pix)", "Z (um)", "A (a.u.)"]
+CHANNELS = ["X (um)", "Y (um)", "Z (um)", "A (a.u.)"]
 
 
 class Settings:
     def __init__(self):
         self.roi_size__pix = 100
-        self.rois = []  # [(50, 50), (100, 200), (198, 150)]
+        self.rois = []  # (100, 200), (198, 150)]
         self.selected = 0
         self.window__pix = 800
         self.camera__pix = np.asarray((1024, 1024))
         self.fov_size__pix = min(self.camera__pix)
         self.fov_center__pix = self.camera__pix // 2
-        self.pixel_size__um = 0.71
+        self.pixel_size__um = 0.330
         self.exposure_time__us = 5000
 
         self._trajectory = []
         self._filename = increment_filename()
         self._aquisition_mode = "idle"
         self._last_measured_file = None
-        self._tracker = Tracker(r"data\data_153.hdf")
+        # self._tracker = Tracker(
+        #     self.pixel_size__um, self.roi_size__pix, r"data\data_153.hdf"
+        # )
+        self._tracker = Tracker(self.pixel_size__um, self.roi_size__pix)
 
         self._plot_range = 10
         self._plot_offset = 0
@@ -60,7 +64,7 @@ class Settings:
 
 
 def plot_adjust_y(plot_range, plot_offset, axis, mean=0):
-    if plot_range > 0:
+    if plot_range > 0 and np.isfinite(mean):
         yrange = plot_offset + np.asarray([-plot_range, plot_range]) / 2 + mean
         axis.set_ylim(yrange)
 
@@ -178,9 +182,12 @@ class MainApp:
                 step_size *= 10
             if event.state & CTRL_KEY:
                 step_size *= 0.1
+            if event.keysym in ["Prior", "Next"]:
+                # 10 times smaller steps for focus
+                step_size *= 0.1
 
             # adjust direction depending on camera orientation
-            xdir = 1
+            xdir = -1
             ydir = -1
 
             gcode = ["G91"]
@@ -193,9 +200,9 @@ class MainApp:
             elif event.keysym == "Right":
                 gcode.append(f"G1 X{xdir*step_size:.3f} F1000")
             elif event.keysym == "Prior":
-                gcode.append(f"G1 Z{step_size:.3f} F1000")
+                gcode.append(f"G1 Z{step_size:.3f} F100")
             elif event.keysym == "Next":
-                gcode.append(f"G1 Z{-step_size:.3f} F1000")
+                gcode.append(f"G1 Z{-step_size:.3f} F100")
             gcode.append("G90")
             gcode.append("M400")
             gcode.append("G93 N0")
@@ -225,7 +232,7 @@ class MainApp:
     def adjust_plot_range(self):
         plot_settings = {
             "channel": [self.settings._plot_channel] + CHANNELS,
-            "range": [self.settings._plot_range, -1, 2, 0.02, "10log"],
+            "range": [self.settings._plot_range, -2, 2, 0.02, "10log"],
             "offset": [self.settings._plot_offset, -100, 100, 0.1, "linear"],
             "subtract mean": [self.settings._plot_subtract_mean, "False", "True"],
         }
@@ -256,9 +263,17 @@ class MainApp:
                 initialfile=r"data\data_006.bin",
             )
             if lut_filename:
+                file_settings = hdf_data(
+                    Path(lut_filename).with_suffix(".hdf")
+                ).settings
+
                 self.stop_camera()
                 sleep(0.5)
-                self.settings._tracker = Tracker(lut_filename)
+                self.settings._tracker = Tracker(
+                    file_settings["pixel_size (um)"],
+                    file_settings["roi_size (pix)"],
+                    lut_filename,
+                )
                 self.start_camera()
                 print(f"New LUT: {self.settings._tracker.filename}")
         else:
@@ -321,6 +336,7 @@ class MainApp:
             self.plt_axes[0].set_title(self.settings._filename)
             self.canvas.draw()
 
+        # Update tracker log
         while not self.tracker_queue.empty():
             data = self.tracker_queue.get()
             if data is SENTINEL:
@@ -333,14 +349,18 @@ class MainApp:
         if len(self.tracker_data) > 1:
             # get colum of z (um) of selected roi from tracker data
             column_index = CHANNELS.index(self.settings._plot_channel)
-            index = self.settings.selected * 4 + column_index
+            index = self.settings.selected * 4 + column_index + 1
             t = [data[0] for data in self.tracker_data]
             t = (np.asarray(t) - t[0]) * self.settings.exposure_time__us * 1e-6
+            # t = np.arange(len(self.tracker_data)) * self.settings.exposure_time__us * 1e-6
             plot_data = [data[index] for data in self.tracker_data]
-            mean = np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
-            self.ax1_line.set_data(t, plot_data)
-            self.plt_axes[1].relim()
-            self.plt_axes[1].autoscale_view()
+            if not np.isnan(plot_data).all():
+                mean = (
+                    np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
+                )
+                self.ax1_line.set_data(t, plot_data)
+                self.plt_axes[1].relim()
+                self.plt_axes[1].autoscale_view()
 
         elif self.settings._last_measured_file:
             # Read data from hdf file
@@ -350,13 +370,16 @@ class MainApp:
                 data.read(self.settings._filename, label=str(self.settings.selected))
                 t = data.traces["Time (s)"]
                 plot_data = data.traces[self.settings._plot_channel]
-                mean = (
-                    np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
-                )
-                self.ax1_line.set_data(t, plot_data)
-                self.plt_axes[1].relim()
-                self.plt_axes[1].autoscale_view()
-                self.plt_axes[0].set_title(self.settings._last_measured_file)
+                if not np.isnan(plot_data).all():
+                    mean = (
+                        np.nanmedian(plot_data)
+                        if self.settings._plot_subtract_mean
+                        else 0
+                    )
+                    self.ax1_line.set_data(t, plot_data)
+                    self.plt_axes[1].relim()
+                    self.plt_axes[1].autoscale_view()
+                    self.plt_axes[0].set_title(self.settings._last_measured_file)
         else:
             self.plt_axes[1].clear()
             self.plt_axes[0].set_title(DEFAULT_PLOT_TITLE)
@@ -402,15 +425,15 @@ class MainApp:
         self.settings.rois = [self.settings.rois[self.settings.selected]]
         self.settings.selected = 0
 
-        range = 0.06
+        range = 0.025
         current_focus = self.stepper_app.get_current_position()[2]
         gcode = [
             f"G1 Z{current_focus:.3f} F10",
             "G93 S0.1",
-            f"G1 Z{current_focus + range:.3f} F0.1",
+            f"G1 Z{current_focus - range:.3f} F0.1",
             "G4 S0.05",
             "G93",
-            f"G1 Z{current_focus:.3f} F10",
+            f"G1 Z{current_focus:.3f} F1",
             f"M400",
         ]
 

@@ -95,6 +95,8 @@ class FrameProducer(threading.Thread):
     def setup_camera(self):
         set_nearest_value(self.cam, "Height", self.settings_new.camera__pix[0])
         set_nearest_value(self.cam, "Width", self.settings_new.camera__pix[1])
+        set_nearest_value(self.cam, "OffsetX", 456)  # 456 (1936 -1024)/2
+        set_nearest_value(self.cam, "OffsetY", 0)  # 96(1216 -1024)/2
         self.cam.set_pixel_format(PixelFormat.Mono8)
 
         try:
@@ -102,13 +104,14 @@ class FrameProducer(threading.Thread):
             self.cam.LineSelector.set("Line2")
             self.cam.ExposureTime.set(self.settings_new.exposure_time__us)
 
+            # print("Getting camera features:")
             # for f in self.cam.get_all_features():
             #     try:
             #         print(f"{f.get_name()}: {f.get()}")
             #     except Exception as e:
             #         # print(f"Error getting feature: {e}")
             #         pass
-            print("Camera settings configured successfully.")
+            # print("Camera settings configured successfully.")
 
         except Exception as e:
             print(f"Error camera set up: {e}")
