@@ -1086,9 +1086,9 @@ class hdf_data(object):
                 parameters = pd.concat([parameters, df], ignore_index=True)
         return parameters
 
-    def set_settings(self, settings_new):
-        rois = settings_new.rois
-        self.settings = settings_new.to_dict()
+    def set_settings(self, settings):
+        rois = settings.rois
+        self.settings = settings.to_dict()
         if rois is not None:
             for label, roi in enumerate(rois):
                 self.label = str(label)
@@ -1155,7 +1155,7 @@ def create_hdf(settings, stepper_df, tracker_df):
     if tracker_df is not None:
         time = tracker_df["Frame"].values
         time -= time[0]
-        time *= settings.exposure_time__us * 1e-6
+        time /= settings.framerate__Hz
         data.traces["Time (s)"] = time
 
         data.shared_tracenames = ["Time (s)"]
@@ -1172,6 +1172,10 @@ def create_hdf(settings, stepper_df, tracker_df):
         tracker_df.drop("Frame", axis=1, inplace=True)
         labels = set([trace.split(" ")[0][1:] for trace in tracker_df.columns])
         channels = set([re.sub(r"\d+", "", trace) for trace in tracker_df.columns])
+
+        for col in tracker_df.columns:
+            if col[0] in ["X", "Y"]:
+                tracker_df[col] *= settings.pixel_size__um  # convert to um
 
         for label in sorted(labels):
             data.label = label

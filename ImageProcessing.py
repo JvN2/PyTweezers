@@ -384,7 +384,7 @@ class FrameConsumer:
 
 
 def load_bin_file(filename: str):
-    data = hdf_data(filename)
+    data = hdf_data(Path(filename).with_suffix(".hdf"))
     shape = [data.traces.shape[0]] + [data.settings["roi_size (pix)"]] * 2
 
     with open(Path(filename).with_suffix(".bin"), "rb") as f:

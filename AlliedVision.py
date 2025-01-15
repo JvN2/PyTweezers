@@ -79,6 +79,7 @@ class FrameProducer(threading.Thread):
         self.frame_queue = frame_queue
         self.killswitch = threading.Event()
         self.settings_new = settings_new
+        self.framerate = None
 
     def __call__(self, cam: Camera, stream: Stream, frame: Frame):
         if frame.get_status() == FrameStatus.Complete:
@@ -92,6 +93,9 @@ class FrameProducer(threading.Thread):
     def stop(self):
         self.killswitch.set()
 
+    # def get_framerate(self):
+    #     return self.cam.get_framerate()
+
     def setup_camera(self):
         set_nearest_value(self.cam, "Height", self.settings_new.camera__pix[0])
         set_nearest_value(self.cam, "Width", self.settings_new.camera__pix[1])
@@ -103,6 +107,9 @@ class FrameProducer(threading.Thread):
             self.cam.TriggerMode.set("Off")
             self.cam.LineSelector.set("Line2")
             self.cam.ExposureTime.set(self.settings_new.exposure_time__us)
+
+            self.framerate = self.cam.get_feature_by_name("AcquisitionFrameRate").get()
+            # ic("Frame producer", self.framerate)
 
             # print("Getting camera features:")
             # for f in self.cam.get_all_features():
@@ -147,6 +154,7 @@ class CameraApplication:
             root=root,
             data_queue=data_queue,
         )
+        self.framerate = None
 
     def __call__(self, cam: Camera, event: CameraEvent):
         if event == CameraEvent.Detected:
@@ -160,6 +168,8 @@ class CameraApplication:
                 producer = self.producers.pop(cam.get_id())
                 producer.stop()
                 producer.join()
+                self.framerate = self.producers[cam.get_id()].framerate
+                # ic("CameraApplication", self.framerate)
 
     def list_camera_features(self, cam: Camera):
         with cam:

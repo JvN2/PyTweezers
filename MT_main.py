@@ -17,34 +17,41 @@ from pathlib import Path
 
 from AlliedVision import CameraApplication
 
+# Final version Shenzhen 20250115 John van Noort
+
 # Constants
 SHIFT_KEY = 0x0001
 CTRL_KEY = 0x0004
 SENTINEL = None
 DEFAULT_PLOT_TITLE = " "
 CHANNELS = ["X (um)", "Y (um)", "Z (um)", "A (a.u.)"]
+AXES = {
+    "X (mm)": "Y",
+    "Y (mm)": "Y",
+    "Focus (mm)": "Z",
+    "Shift (mm)": "A",
+    "Rotation (turns)": "B",
+}
 
 
 class Settings:
     def __init__(self):
         self.roi_size__pix = 100
-        self.rois = []  # (100, 200), (198, 150)]
+        self.rois = [(100, 200), (198, 150)]
         self.selected = 0
         self.window__pix = 800
         self.camera__pix = np.asarray((1024, 1024))
         self.fov_size__pix = min(self.camera__pix)
         self.fov_center__pix = self.camera__pix // 2
-        self.pixel_size__um = 0.330
-        self.exposure_time__us = 5000
+        self.pixel_size__um = 0.71
+        self.exposure_time__us = 10000
+        self.framerate__Hz = 98.1395  # to be obtained from camera
 
         self._trajectory = []
         self._filename = increment_filename()
         self._aquisition_mode = "idle"
         self._last_measured_file = None
-        # self._tracker = Tracker(
-        #     self.pixel_size__um, self.roi_size__pix, r"data\data_153.hdf"
-        # )
-        self._tracker = Tracker(self.pixel_size__um, self.roi_size__pix)
+        self._tracker = Tracker(r"D:\users\Administrator\data\20250114\data_005.hdf")
 
         self._plot_range = 10
         self._plot_offset = 0
@@ -58,7 +65,7 @@ class Settings:
             if key[0] != "_":
                 if "__" in key:
                     key = key.replace("__", " (") + ")"
-                    dict[key] = value
+                dict[key] = value
 
         return dict
 
@@ -97,6 +104,11 @@ class MainApp:
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Exit", command=self.exit_application)
         menubar.add_cascade(label="File", menu=file_menu)
+
+        stepper_menu = tk.Menu(menubar, tearoff=0)
+        stepper_menu.add_command(label="Home", command=self.home_steppers)
+        stepper_menu.add_command(label="Move...", command=self.move_steppers)
+        menubar.add_cascade(label="Steppers", menu=stepper_menu)
 
         bead_menu = tk.Menu(menubar, tearoff=0)
         bead_menu.add_command(label="Remove all", command=self.remove_beads)
@@ -222,6 +234,7 @@ class MainApp:
 
     def test(self):
         print("Test function")
+        ic(self.settings.to_dict())
         # df = self.stepper_app.get_dataframe()
         # ic(df)
         # plt.plot(df["Z"])
@@ -351,9 +364,10 @@ class MainApp:
             column_index = CHANNELS.index(self.settings._plot_channel)
             index = self.settings.selected * 4 + column_index + 1
             t = [data[0] for data in self.tracker_data]
-            t = (np.asarray(t) - t[0]) * self.settings.exposure_time__us * 1e-6
-            # t = np.arange(len(self.tracker_data)) * self.settings.exposure_time__us * 1e-6
+            t = (np.asarray(t) - t[0]) / self.settings.framerate__Hz
             plot_data = [data[index] for data in self.tracker_data]
+            if self.settings._plot_channel in ["X (um)", "Y (um)"]:
+                plot_data = np.asarray(plot_data) * self.settings.pixel_size__um
             if not np.isnan(plot_data).all():
                 mean = (
                     np.nanmedian(plot_data) if self.settings._plot_subtract_mean else 0
@@ -364,7 +378,6 @@ class MainApp:
 
         elif self.settings._last_measured_file:
             # Read data from hdf file
-            # ic(self.settings._plot_channel, self.settings._plot_range)
             data = hdf_data(self.settings._filename)
             if data.list_channels():
                 data.read(self.settings._filename, label=str(self.settings.selected))
@@ -449,7 +462,7 @@ class MainApp:
                 "Shift (mm)",
                 "Rotation (turns)",
             ],
-            "relative": ["True", "False", "True"],
+            "relative": ["False", "False", "True"],
             "start": [0, -100, 100, 0.1, "linear"],
             "target": [0.01, -100, 100, 0.001, "linear"],
             "wait (s)": [1, 0, 10, 0.1, "linear"],
@@ -479,7 +492,45 @@ class MainApp:
         self.settings.rois = []
         self.settings.selected = 0
 
+    def home_steppers(self):
+        gcode = [
+            f"G28 Z",
+            "G28 A",
+            f"G28 XY",
+            "G0 X0 Y0",
+            "G0 Z0",
+        ]
+        self.stepper_app.command_queue.put(gcode)
+
+    def move_steppers(self):
+        position = self.stepper_app.get_current_position()
+
+        move_settings = {
+            "X (mm)": [position[0], -20, 20, 0.01, "linear"],
+            "Y (mm)": [position[1], -12, 12, 0.01, "linear"],
+            "Focus (mm)": [position[2], -5, 0.5, 0.01, "linear"],
+            "Shift (mm)": [position[3], 0, 15, 0.01, "linear"],
+            "Rotation (turns)": [position[4], -100, 100, 1, "linear"],
+        }
+
+        settings_editor = SettingsEditor(self.root, move_settings, "Move steppers ...")
+        self.root.wait_window(settings_editor)
+
+        if settings_editor.parameters:
+            gcode = []
+            for i, key in enumerate(move_settings.keys()):
+                if settings_editor.parameters[key] != position[i]:
+                    gcode.append(
+                        f"G1 {AXES[key]}{settings_editor.parameters[key]:.3f} F1000"
+                    )
+            gcode.append("M400")
+            gcode.append("G93 N0")
+            self.stepper_app.command_queue.put(gcode)
+
     def go_trajectory(self, gcode=None, mode="measure"):
+        # self.settings.framerate_Hz = self.camera_app.framerate
+        # ic("go_trajectory()", self.settings.framerate_Hz)
+
         if len(self.settings.rois) == 0:
             messagebox.showinfo("Error", "No ROIs defined")
             return

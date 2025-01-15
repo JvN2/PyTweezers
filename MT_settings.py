@@ -202,6 +202,7 @@ class SettingsEditor(tk.Toplevel):
         self.destroy()
 
     def on_cancel(self):
+        self.parameters = None
         self.destroy()
 
 

@@ -390,32 +390,32 @@ def find_modulation(y, x, show=False):
 
 
 class Tracker:
-    def __init__(self, pixel_size__um, roi_size__pix, filename=None):
+    def __init__(self, filename=None):
 
         if filename is None:
             # Open file dialog to select a file
-            # root = tk.Tk()
-            # root.withdraw()  # Hide the root window
-            # filename = tk.filedialog.askopenfilename(
-            #     title="Select a file",
-            #     filetypes=(("bin files", "*.bin"), ("All files", "*.*")),
-            # )
-            # if not filename:
-            #     raise ValueError("No file selected")
-
-            # only do xy tracking
-            dummy = np.zeros((roi_size__pix, roi_size__pix))
-            self.mask = bandpass_filter(
-                dummy, high=5, low=roi_size__pix / 2, width=2.5, centered=True
+            root = tk.Tk()
+            root.withdraw()  # Hide the root window
+            filename = tk.filedialog.askopenfilename(
+                title="Select a file",
+                filetypes=(("bin files", "*.bin"), ("All files", "*.*")),
             )
-            self.z_lut = None
-            self.pixel_size__um = pixel_size__um
+            if not filename:
+                raise ValueError("No file selected")
+
+            # # only do xy tracking
+            # dummy = np.zeros((roi_size__pix, roi_size__pix))
+            # self.mask = bandpass_filter(
+            #     dummy, high=5, low=roi_size__pix / 2, width=2.5, centered=True
+            # )
+            # self.z_lut = None
+            # self.pixel_size__um = pixel_size__um
 
         else:
+            file_settings = hdf_data(Path(filename).with_suffix(".hdf")).settings
 
-            filename = Path(filename).with_suffix(".hdf")
-            self.filename = filename
-            self.pixel_size__um = pixel_size__um
+            self.pixel_size__um = file_settings["pixel_size (um)"]
+            self.roi_size__pix = file_settings["roi_size (pix)"]
 
             # correct focus for Focus recording errors
             focus = hdf_data(filename).traces["Focus (mm)"].values
@@ -425,13 +425,14 @@ class Tracker:
             # correct for refractive index
             self.z_lut = fit * 1000 / 1.3333
 
-            images = load_bin_file(filename)
+            images = load_bin_file(Path(filename).with_suffix(".bin"))
             self.mask = bandpass_filter(
                 images[0], high=8, low=25, width=2.5, centered=True
             )
 
             self.lut = self._create_lut(images, average=None)
-            self.z_lut -= find_focus(images, self.z_lut, show=False)
+            # self.z_lut -= find_focus(images, self.z_lut, show=False)
+            self.z_lut = np.max(self.z_lut) - self.z_lut
 
             # mask = bandpass_filter(
             #     images[0], high=15, low=25, width=2, centered=False, cut_dc=True
@@ -629,11 +630,13 @@ class Tracker:
 
 if __name__ == "__main__":
     filename1 = r"data\data_006.hdf"
-    filename2 = r"data\data_153.hdf"
+    lut_filename = r"data\data_153.hdf"
+    lut_filename = r"D:\users\Administrator\data\20250114\data_005.hdf"
     # filename = r"d:\users\noort\data\20241219\data_002.hdf"
     # filename = r"d:\users\noort\data\20241220\data_003.hdf"
-    tracker = Tracker(filename2)
-    images = load_bin_file(filename2)
+    tracker = Tracker(lut_filename)
+    images = load_bin_file(lut_filename)
+    ic(images.shape)
     tracker.get_coords(images, show=True)
 
     if False:

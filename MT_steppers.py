@@ -28,7 +28,6 @@ def to_axis(axis):
 
 
 def to_gcode(trajectory, start_position=np.zeros(5)):
-
     gcode = []
     index, axis = to_axis(trajectory["axis"])
     velocity = (
@@ -257,7 +256,7 @@ class StepperApplication(threading.Thread):
 
     def get_current_position(self):
         self.send_gcode("G93 N0")
-        time.sleep(0.1)
+        time.sleep(0.5)
         if self.current_position is None:
             messagebox.showinfo(
                 "Error",
